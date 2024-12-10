@@ -21,4 +21,4 @@ COPY ./certs/ ./certs/
 
 COPY --from=builder /usr/src/app/slipstream .
 
-CMD ["/usr/src/app/slipstream"]
+ENTRYPOINT ["/usr/src/app/slipstream"]

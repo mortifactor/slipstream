@@ -3,27 +3,30 @@ project(slipstream C)
 
 set(CMAKE_C_STANDARD 23)
 
-find_package(Git QUIET)
-if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
-    option(GIT_SUBMODULE "Check submodules during build" ON)
-    if(GIT_SUBMODULE)
-        execute_process(COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive
-                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-                RESULT_VARIABLE GIT_SUBMOD_RESULT)
-        if(NOT GIT_SUBMOD_RESULT EQUAL "0")
-            message(FATAL_ERROR "git submodule update --init --recursive failed")
-        endif()
-    endif()
-endif()
+set(PICOQUIC_FETCH_PTLS ON)
 
-set(PICOQUIC_FETCH_PTLS Y)
-add_subdirectory(extern/picoquic)
+set(DISABLE_DEBUG_PRINTF OFF)
+set(ENABLE_ASAN OFF)
+set(ENABLE_UBSAN OFF)
+set(BUILD_DEMO OFF)
+set(BUILD_HTTP OFF)
+set(BUILD_LOGLIB OFF)
+set(BUILD_LOGREADER OFF)
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    list(APPEND PICOQUIC_ADDITIONAL_C_FLAGS -g -Og)
+set(BUILD_TESTING OFF)
+
+set(PICOQUIC_ADDITIONAL_C_FLAGS "" CACHE STRING "Additional C flags for picoquic")
+
+if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+    list(APPEND PICOQUIC_ADDITIONAL_C_FLAGS -Og)
+    list(APPEND PICOQUIC_ADDITIONAL_CXX_FLAGS -Og)
+    set(ENABLE_ASAN Y)
 else()
     list(APPEND PICOQUIC_ADDITIONAL_C_FLAGS -O3)
+    list(APPEND PICOQUIC_ADDITIONAL_CXX_FLAGS -O3)
 endif ()
+
+add_subdirectory(extern/picoquic)
 
 add_executable(slipstream
         src/slipstream.c
@@ -50,7 +53,10 @@ add_executable(slipstream
         extern/SPCDNS/src/output.h
 )
 target_link_libraries(slipstream PRIVATE m)
-target_link_libraries(slipstream PRIVATE picoquic-log picoquic-core)
+target_link_libraries(slipstream PRIVATE picoquic-core)
+if (${CMAKE_BUILD_TYPE} STREQUAL DEBUG)
+    target_link_libraries(slipstream PRIVATE picoquic-log)
+endif ()
 
 target_include_directories(slipstream PRIVATE include)
 target_include_directories(slipstream PRIVATE extern)

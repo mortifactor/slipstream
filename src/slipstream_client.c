@@ -3,7 +3,9 @@
 #include <picoquic.h>
 #include <picoquic_utils.h>
 #include <picosocks.h>
+#ifdef BUILD_LOGLIB
 #include <autoqlog.h>
+#endif
 #include <picoquic_internal.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -557,7 +559,7 @@ int picoquic_slipstream_client(int listen_port, char const* server_name, int ser
     picoquic_config_init(&config);
     config.nb_connections = 8;
     // config.log_file = "-";
-#ifndef DISABLE_DEBUG_PRINTF
+#ifndef BUILD_LOGLIB
     config.qlog_dir = SLIPSTREAM_QLOG_DIR;
 #endif
     config.server_port = server_port;
@@ -583,9 +585,11 @@ int picoquic_slipstream_client(int listen_port, char const* server_name, int ser
     }
 
     picoquic_set_cookie_mode(quic, 2);
+#ifdef BUILD_LOGLIB
     picoquic_set_qlog(quic, config.qlog_dir);
-    picoquic_set_key_log_file_from_env(quic);;
     debug_printf_push_stream(stderr);
+#endif
+    picoquic_set_key_log_file_from_env(quic);
 
     ret = slipstream_connect(server_name, server_port, quic, &cnx, &client_ctx);
     if (ret != 0) {

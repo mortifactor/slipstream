@@ -3,7 +3,9 @@
 #include <picoquic.h>
 #include <picoquic_packet_loop.h>
 #include <picosocks.h>
+#ifdef BUILD_LOGLIB
 #include <autoqlog.h>
+#endif
 #include <pthread.h>
 #include <stdbool.h>
 #include <arpa/nameser.h>
@@ -525,9 +527,11 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     }
 
     picoquic_set_cookie_mode(quic, 2);
+#ifdef BUILD_LOGLIB
     picoquic_set_qlog(quic, config.qlog_dir);
-    picoquic_set_key_log_file_from_env(quic);;
     debug_printf_push_stream(stderr);
+#endif
+    picoquic_set_key_log_file_from_env(quic);
 
     picoquic_packet_loop_param_t param = {0};
     param.local_af = AF_INET;

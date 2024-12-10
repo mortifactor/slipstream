@@ -1,0 +1,9 @@
+[submodule "extern/picoquic"]
+	path = extern/picoquic
+	url = git@github.com:EndPositive/picoquic.git
+[submodule "extern/SPCDNS"]
+	path = extern/SPCDNS
+	url = git@github.com:spc476/SPCDNS.git
+[submodule "extern/lua-resty-base-encoding"]
+	path = extern/lua-resty-base-encoding
+	url = git@github.com:spacewander/lua-resty-base-encoding.git

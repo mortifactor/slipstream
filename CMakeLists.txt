@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 3.13)
 project(slipstream C)
 
 set(CMAKE_C_STANDARD 23)
@@ -17,6 +17,9 @@ set(BUILD_TESTING OFF)
 
 set(PICOQUIC_ADDITIONAL_C_FLAGS "" CACHE STRING "Additional C flags for picoquic")
 
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
+endif()
 if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
     list(APPEND PICOQUIC_ADDITIONAL_C_FLAGS -Og)
     list(APPEND PICOQUIC_ADDITIONAL_CXX_FLAGS -Og)
@@ -24,7 +27,7 @@ if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
 else()
     list(APPEND PICOQUIC_ADDITIONAL_C_FLAGS -O3)
     list(APPEND PICOQUIC_ADDITIONAL_CXX_FLAGS -O3)
-endif ()
+endif()
 
 add_subdirectory(extern/picoquic)
 

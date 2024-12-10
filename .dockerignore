@@ -1,0 +1,7 @@
+*
+!certs/
+!src/
+!extern/
+!include/
+!src/
+!CMakeLists.txt

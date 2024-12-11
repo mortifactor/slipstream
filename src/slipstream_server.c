@@ -130,7 +130,6 @@ typedef struct st_slipstream_server_stream_ctx_t {
 typedef struct st_slipstream_server_ctx_t {
     picoquic_cnx_t* cnx;
     slipstream_server_stream_ctx_t* first_stream;
-    slipstream_server_stream_ctx_t* last_stream;
     picoquic_network_thread_ctx_t* thread_ctx;
     struct sockaddr_storage upstream_addr;
     struct st_slipstream_server_ctx_t* prev_ctx;
@@ -140,6 +139,11 @@ typedef struct st_slipstream_server_ctx_t {
 slipstream_server_stream_ctx_t* slipstream_server_create_stream_ctx(slipstream_server_ctx_t* server_ctx,
                                                                     uint64_t stream_id) {
     slipstream_server_stream_ctx_t* stream_ctx = malloc(sizeof(slipstream_server_stream_ctx_t));
+
+    if (stream_ctx == NULL) {
+        fprintf(stdout, "Memory Error, cannot create stream\n");
+        return NULL;
+    }
 
     int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (sock_fd < 0) {
@@ -152,51 +156,43 @@ slipstream_server_stream_ctx_t* slipstream_server_create_stream_ctx(slipstream_s
         return NULL;
     }
 
-    if (stream_ctx != NULL) {
-        memset(stream_ctx, 0, sizeof(slipstream_server_stream_ctx_t));
-
-        if (server_ctx->last_stream == NULL) {
-            server_ctx->last_stream = stream_ctx;
-            server_ctx->first_stream = stream_ctx;
-        }
-        else {
-            stream_ctx->previous_stream = server_ctx->last_stream;
-            server_ctx->last_stream->next_stream = stream_ctx;
-            server_ctx->last_stream = stream_ctx;
-        }
-        stream_ctx->stream_id = stream_id;
-
-        stream_ctx->fd = sock_fd;
+    memset(stream_ctx, 0, sizeof(slipstream_server_stream_ctx_t));
+    if (server_ctx->first_stream == NULL) {
+        server_ctx->first_stream = stream_ctx;
+    } else {
+        stream_ctx->next_stream = server_ctx->first_stream;
+        stream_ctx->next_stream->previous_stream = stream_ctx;
+        server_ctx->first_stream = stream_ctx;
     }
+    stream_ctx->fd = sock_fd;
+    stream_ctx->stream_id = stream_id;
 
     return stream_ctx;
 }
 
-void slipstream_server_delete_stream_context(slipstream_server_ctx_t* server_ctx,
+static void slipstream_server_free_stream_context(slipstream_server_ctx_t* server_ctx,
                                              slipstream_server_stream_ctx_t* stream_ctx) {
-    /* Remove the context from the server's list */
-    if (stream_ctx->previous_stream == NULL) {
-        server_ctx->first_stream = stream_ctx->next_stream;
-    }
-    else {
+    if (stream_ctx->previous_stream != NULL) {
         stream_ctx->previous_stream->next_stream = stream_ctx->next_stream;
     }
-
-    if (stream_ctx->next_stream == NULL) {
-        server_ctx->last_stream = stream_ctx->previous_stream;
-    }
-    else {
+    if (stream_ctx->next_stream != NULL) {
         stream_ctx->next_stream->previous_stream = stream_ctx->previous_stream;
     }
+    if (server_ctx->first_stream == stream_ctx) {
+        server_ctx->first_stream = stream_ctx->next_stream;
+    }
 
-    /* release the memory */
+    stream_ctx->fd = close(stream_ctx->fd);
+
     free(stream_ctx);
 }
 
-void slipstream_server_delete_context(slipstream_server_ctx_t* server_ctx) {
+static void slipstream_server_free_context(slipstream_server_ctx_t* server_ctx) {
+    slipstream_server_stream_ctx_t* stream_ctx;
+
     /* Delete any remaining stream context */
-    while (server_ctx->first_stream != NULL) {
-        slipstream_server_delete_stream_context(server_ctx, server_ctx->first_stream);
+    while ((stream_ctx = server_ctx->first_stream) != NULL) {
+        slipstream_server_free_stream_context(server_ctx, stream_ctx);
     }
 
     /* release the memory */
@@ -243,7 +239,7 @@ int slipstream_server_sockloop_callback(picoquic_quic_t* quic, picoquic_packet_l
 typedef struct st_slipstream_server_poller_args {
     int fd;
     picoquic_cnx_t* cnx;
-    slipstream_server_ctx_t* client_ctx;
+    slipstream_server_ctx_t* server_ctx;
     slipstream_server_stream_ctx_t* stream_ctx;
 } slipstream_server_poller_args;
 
@@ -260,7 +256,7 @@ void* slipstream_server_poller(void* arg) {
         int ret = poll(&fds, 1, 1000);
         if (ret < 0) {
             perror("poll() failed");
-            pthread_exit(NULL);
+            break;
         }
         if (ret == 0) {
             continue;
@@ -268,14 +264,18 @@ void* slipstream_server_poller(void* arg) {
 
         args->stream_ctx->set_active = 1;
 
-        ret = picoquic_wake_up_network_thread(args->client_ctx->thread_ctx);
+        ret = picoquic_wake_up_network_thread(args->server_ctx->thread_ctx);
         if (ret != 0) {
             fprintf(stderr, "poll: could not wake up network thread, ret = %d\n", ret);
         }
         printf("[%lu:%d] wakeup\n", args->stream_ctx->stream_id, args->fd);
 
-        pthread_exit(NULL);
+        break;
     }
+
+
+    free(args);
+    pthread_exit(NULL);
 }
 
 int slipstream_server_callback(picoquic_cnx_t* cnx,
@@ -374,16 +374,20 @@ int slipstream_server_callback(picoquic_cnx_t* cnx,
         else {
             printf("[%lu:%d] stream reset\n", stream_id, stream_ctx->fd);
 
-            /* Close the local_sock fd */
-            stream_ctx->fd = close(stream_ctx->fd);
+            slipstream_server_free_stream_context(server_ctx, stream_ctx);
+            picoquic_reset_stream(cnx, stream_id, SLIPSTREAM_FILE_CANCEL_ERROR);
         }
         break;
     case picoquic_callback_stateless_reset:
     case picoquic_callback_close: /* Received connection close */
     case picoquic_callback_application_close: /* Received application close */
         printf("Connection closed.\n");
+        if (server_ctx != NULL) {
+            slipstream_server_free_context(server_ctx);
+        }
         /* Remove the application callback */
         picoquic_set_callback(cnx, NULL, NULL);
+        picoquic_close(cnx, 0);
         break;
     case picoquic_callback_prepare_to_send:
         /* Active sending API */
@@ -416,7 +420,7 @@ int slipstream_server_callback(picoquic_cnx_t* cnx,
                     slipstream_server_poller_args* args = malloc(sizeof(slipstream_server_poller_args));
                     args->fd = stream_ctx->fd;
                     args->cnx = cnx;
-                    args->client_ctx = server_ctx;
+                    args->server_ctx = server_ctx;
                     args->stream_ctx = stream_ctx;
 
                     pthread_t thread;
@@ -501,7 +505,7 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     config.server_cert_file = server_cert;
     config.server_key_file = server_key;
     // config.log_file = "-";
-#ifndef DISABLE_DEBUG_PRINTF
+#ifndef BUILD_LOGLIB
     config.qlog_dir = SLIPSTREAM_QLOG_DIR;
 #endif
     config.server_port = server_port;

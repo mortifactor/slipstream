@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <picoquic.h>
 #include <picoquic_utils.h>
+#include <picoquic_packet_loop.h>
 #include <picosocks.h>
 #ifdef BUILD_LOGLIB
 #include <autoqlog.h>
@@ -14,13 +15,10 @@
 #include <sys/param.h>
 #include <sys/poll.h>
 
+#include "lua-resty-base-encoding-base32.h"
 #include "picoquic_config.h"
-#include "picoquic_packet_loop.h"
 #include "slipstream.h"
 #include "slipstream_inline_dots.h"
-
-#include "lua-resty-base-encoding-base32.h"
-
 #include "SPCDNS/src/dns.h"
 #include "SPCDNS/src/mappings.h"
 
@@ -120,7 +118,7 @@ ssize_t client_decode(const unsigned char** dest_buf, const unsigned char* src_b
     *dest_buf = NULL;
 
     size_t bufsize = DNS_DECODEBUF_4K * sizeof(dns_decoded_t);
-    dns_decoded_t* decoded = malloc(bufsize);
+    dns_decoded_t decoded[DNS_DECODEBUF_4K];
     const dns_rcode_t rc = dns_decode(decoded, &bufsize, (const dns_packet_t*) src_buf, src_buf_len);
     if (rc != RCODE_OKAY) {
         fprintf(stderr, "dns_decode() = (%d) %s\n", rc, dns_rcode_text(rc));
@@ -153,6 +151,7 @@ ssize_t client_decode(const unsigned char** dest_buf, const unsigned char* src_b
 
 typedef struct st_slipstream_client_stream_ctx_t {
     struct st_slipstream_client_stream_ctx_t* next_stream;
+    struct st_slipstream_client_stream_ctx_t* previous_stream;
     int fd;
     uint64_t stream_id;
     volatile sig_atomic_t set_active;
@@ -161,7 +160,6 @@ typedef struct st_slipstream_client_stream_ctx_t {
 typedef struct st_slipstream_client_ctx_t {
     picoquic_cnx_t* cnx;
     slipstream_client_stream_ctx_t* first_stream;
-    slipstream_client_stream_ctx_t* last_stream;
     picoquic_network_thread_ctx_t* thread_ctx;
 } slipstream_client_ctx_t;
 
@@ -177,11 +175,10 @@ slipstream_client_stream_ctx_t* slipstream_client_create_stream_ctx(picoquic_cnx
     memset(stream_ctx, 0, sizeof(slipstream_client_stream_ctx_t));
     if (client_ctx->first_stream == NULL) {
         client_ctx->first_stream = stream_ctx;
-        client_ctx->last_stream = stream_ctx;
-    }
-    else {
-        client_ctx->last_stream->next_stream = stream_ctx;
-        client_ctx->last_stream = stream_ctx;
+    } else {
+        stream_ctx->next_stream = client_ctx->first_stream;
+        stream_ctx->next_stream->previous_stream = stream_ctx;
+        client_ctx->first_stream = stream_ctx;
     }
     stream_ctx->fd = sock_fd;
     stream_ctx->stream_id = picoquic_get_next_local_stream_id(client_ctx->cnx, 0);
@@ -189,17 +186,32 @@ slipstream_client_stream_ctx_t* slipstream_client_create_stream_ctx(picoquic_cnx
     return stream_ctx;
 }
 
+static void slipstream_client_free_stream_ctx(slipstream_client_ctx_t* client_ctx, slipstream_client_stream_ctx_t* stream_ctx) {
+    if (stream_ctx->previous_stream != NULL) {
+        stream_ctx->previous_stream->next_stream = stream_ctx->next_stream;
+    }
+    if (stream_ctx->next_stream != NULL) {
+        stream_ctx->next_stream->previous_stream = stream_ctx->previous_stream;
+    }
+    if (client_ctx->first_stream == stream_ctx) {
+        client_ctx->first_stream = stream_ctx->next_stream;
+    }
+
+    stream_ctx->fd = close(stream_ctx->fd);
+
+    free(stream_ctx);
+}
+
 static void slipstream_client_free_context(slipstream_client_ctx_t* client_ctx) {
     slipstream_client_stream_ctx_t* stream_ctx;
 
+    /* Delete any remaining stream context */
     while ((stream_ctx = client_ctx->first_stream) != NULL) {
-        client_ctx->first_stream = stream_ctx->next_stream;
-        if (stream_ctx->fd != 0) {
-            stream_ctx->fd = close(stream_ctx->fd);
-        }
-        free(stream_ctx);
+        slipstream_client_free_stream_ctx(client_ctx, stream_ctx);
     }
-    client_ctx->last_stream = NULL;
+
+    /* release the memory */
+    free(client_ctx);
 }
 
 void slipstream_client_mark_active_pass(slipstream_client_ctx_t* client_ctx) {
@@ -221,9 +233,18 @@ int slipstream_client_sockloop_callback(picoquic_quic_t* quic, picoquic_packet_l
 
     switch (cb_mode) {
     case picoquic_packet_loop_wake_up:
+        if (callback_ctx == NULL) {
+            return 0;
+        }
+
         slipstream_client_mark_active_pass(client_ctx);
+
         break;
     case picoquic_packet_loop_after_send:
+        if (callback_ctx == NULL) {
+            return 0;
+        }
+
         if (client_ctx->cnx->cnx_state == picoquic_state_disconnected) {
             printf("Terminate packet loop\n");
             return PICOQUIC_NO_ERROR_TERMINATE_PACKET_LOOP;
@@ -255,7 +276,7 @@ void* slipstream_client_poller(void* arg) {
         int ret = poll(&fds, 1, 1000);
         if (ret < 0) {
             perror("poll() failed");
-            pthread_exit(NULL);
+            break;
         }
         if (ret == 0) {
             continue;
@@ -267,9 +288,13 @@ void* slipstream_client_poller(void* arg) {
         if (ret != 0) {
             fprintf(stderr, "poll: could not wake up network thread, ret = %d\n", ret);
         }
+        printf("[%lu:%d] wakeup\n", args->stream_ctx->stream_id, args->fd);
 
-        pthread_exit(NULL);
+        break;
     }
+
+    free(args);
+    pthread_exit(NULL);
 }
 
 typedef struct st_slipstream_client_accepter_args {
@@ -293,13 +318,13 @@ void* slipstream_client_accepter(void* arg) {
                 continue;
             }
             perror("accept() failed");
-            pthread_exit(NULL);
+            break;
         }
 
         slipstream_client_stream_ctx_t* stream_ctx = slipstream_client_create_stream_ctx(args->cnx, args->client_ctx, client_sock);
         if (stream_ctx == NULL) {
             fprintf(stderr, "Could not initiate stream for %d", client_sock);
-            pthread_exit(NULL);
+            break;
         }
 
         stream_ctx->set_active = 1;
@@ -310,8 +335,11 @@ void* slipstream_client_accepter(void* arg) {
             pthread_exit(NULL);
         }
 
-        printf("[?:%d] accept: connection\n[?:%d] wakeup\n", client_sock, client_sock);
+        printf("[%lu:%d] accept: connection\n[%lu:%d] wakeup\n", stream_ctx->stream_id, client_sock,  stream_ctx->stream_id, client_sock);
     }
+
+    free(args);
+    pthread_exit(NULL);
 }
 
 int slipstream_client_callback(picoquic_cnx_t* cnx,
@@ -377,19 +405,17 @@ int slipstream_client_callback(picoquic_cnx_t* cnx,
         else {
             printf("[%lu:%d] stream reset\n", stream_id, stream_ctx->fd);
 
-            /* Close the local_sock fd */
-            stream_ctx->fd = close(stream_ctx->fd);
+            slipstream_client_free_stream_ctx(client_ctx, stream_ctx);
+            picoquic_reset_stream(cnx, stream_id, SLIPSTREAM_FILE_CANCEL_ERROR);
         }
         break;
     case picoquic_callback_stateless_reset:
     case picoquic_callback_close: /* Received connection close */
     case picoquic_callback_application_close: /* Received application close */
-        printf("Connection closed (%d).\n", fin_or_event);
-        /* Delete the server application context */
+        printf("Connection closed.\n");
         slipstream_client_free_context(client_ctx);
         /* Remove the application callback */
         picoquic_set_callback(cnx, NULL, NULL);
-        picoquic_delete_cnx(cnx);
         picoquic_close(cnx, 0);
         break;
     case picoquic_callback_prepare_to_send:
@@ -482,6 +508,10 @@ int slipstream_client_callback(picoquic_cnx_t* cnx,
     return ret;
 }
 
+void client_sighandler(int signum) {
+    printf("Signal %d received\n", signum);
+}
+
 static int slipstream_connect(char const* server_name, int server_port,
                                   picoquic_quic_t* quic, picoquic_cnx_t** cnx,
                                   slipstream_client_ctx_t* client_ctx) {
@@ -535,10 +565,6 @@ static int slipstream_connect(char const* server_name, int server_port,
     printf("\n");
 
     return ret;
-}
-
-void client_sighandler(int signum) {
-    printf("Signal %d received\n", signum);
 }
 
 int picoquic_slipstream_client(int listen_port, char const* server_name, int server_port) {
@@ -666,6 +692,9 @@ int picoquic_slipstream_client(int listen_port, char const* server_name, int ser
     signal(SIGTERM, client_sighandler);
     picoquic_packet_loop_v3(&thread_ctx);
     ret = thread_ctx.return_code;
+
+    /* And finish. */
+    printf("Client exit, ret = %d\n", ret);
 
     /* Save tickets and tokens, and free the QUIC context */
     if (picoquic_save_session_tickets(quic, ticket_store_filename) != 0) {

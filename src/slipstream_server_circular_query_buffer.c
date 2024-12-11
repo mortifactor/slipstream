@@ -1,10 +1,6 @@
 #include <time.h>
 #include "slipstream_server_circular_query_buffer.h"
 
-#include "picoquic_utils.h"
-#include "SPCDNS/src/dns.h"
-
-
 // Get next available slot for writing
 dns_decoded_t* circular_query_buffer_get_write_slot(circular_query_buffer_t* buf) {
     dns_decoded_t* slot = buf->queries[buf->head];
@@ -36,7 +32,7 @@ dns_decoded_t* circular_query_buffer_get_read_slot(circular_query_buffer_t* buf)
 size_t circular_query_buffer_get_size(circular_query_buffer_t* buf) {
     if (buf->head >= buf->tail) {
         return buf->head - buf->tail;
-    } else {
-        return SIZE - buf->tail + buf->head;
     }
+
+    return SIZE - buf->tail + buf->head;
 }

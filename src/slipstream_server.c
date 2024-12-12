@@ -22,6 +22,8 @@
 #include "SPCDNS/src/mappings.h"
 
 circular_query_buffer_t server_cqb = {0};
+char* server_domain_name = NULL;
+size_t server_domain_name_len = 0;
 
 ssize_t server_encode(unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_size) {
     const dns_query_t *query = (dns_query_t *) circular_query_buffer_get_read_slot(&server_cqb);
@@ -99,12 +101,12 @@ ssize_t server_decode(const unsigned char** dest_buf, const unsigned char* src_b
         return -1;
     }
 
-    const char* tld = "test.com.";
-    const size_t data_len = strlen(question->name) - strlen(tld) - 1;
+    const size_t data_len = strlen(question->name) - server_domain_name_len - 1 - 1;
 
     // copy the subdomain from name to a new buffer
     char data_buf[data_len];
     memcpy(data_buf, question->name, data_len);
+    data_buf[data_len] = '\0';
     const size_t encoded_len = slipstream_inline_undotify(data_buf, data_len);
 
     char* decoded_buf = malloc(encoded_len);
@@ -484,7 +486,7 @@ void server_sighandler(int signum) {
 }
 
 int picoquic_slipstream_server(int server_port, const char* server_cert, const char* server_key,
-                               char const* upstream_name, int upstream_port) {
+                               char const* upstream_name, int upstream_port, const char* domain_name) {
     /* Start: start the QUIC process with cert and key files */
     int ret = 0;
     picoquic_quic_t* quic = NULL;
@@ -494,6 +496,9 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
 
     int is_name = 0;
     picoquic_get_server_address(upstream_name, upstream_port, &default_context.upstream_addr, &is_name);
+
+    server_domain_name = strdup(domain_name);
+    server_domain_name_len = strlen(domain_name);
 
     // int mtu = 250;
     int mtu = 900;
@@ -505,14 +510,14 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     config.server_cert_file = server_cert;
     config.server_key_file = server_key;
     // config.log_file = "-";
-#ifndef BUILD_LOGLIB
+#ifdef BUILD_LOGLIB
     config.qlog_dir = SLIPSTREAM_QLOG_DIR;
 #endif
     config.server_port = server_port;
     config.mtu_max = mtu;
     config.initial_send_mtu_ipv4 = mtu;
     config.initial_send_mtu_ipv6 = mtu;
-    config.cc_algo_id = "bbr1";
+    config.cc_algo_id = "cubic";
     config.multipath_option = 0;
     config.use_long_log = 1;
     config.do_preemptive_repeat = 1;
@@ -544,6 +549,7 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     param.is_client = 0;
     param.decode = server_decode;
     param.encode = server_encode;
+    // param.delay_max = 1;
 
     picoquic_network_thread_ctx_t thread_ctx = {0};
     thread_ctx.quic = quic;

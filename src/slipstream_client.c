@@ -22,6 +22,9 @@
 #include "SPCDNS/src/dns.h"
 #include "SPCDNS/src/mappings.h"
 
+char* client_domain_name = NULL;
+size_t client_domain_name_len = 0;
+
 ssize_t client_encode_segment(dns_packet_t* packet, size_t* packet_len, const unsigned char* src_buf, size_t src_buf_len) {
     edns0_opt_t opt;
     dns_answer_t edns;
@@ -31,10 +34,9 @@ ssize_t client_encode_segment(dns_packet_t* packet, size_t* packet_len, const un
     const size_t encoded_len = slipstream_inline_dotify(name, 255, len);
     name[encoded_len] = '.';
 
-    const char* tld = "test.com.";
-    const size_t tld_len = strlen(tld);
-    memcpy(&name[encoded_len + 1], tld, tld_len);
-    name[encoded_len + 1 + tld_len] = '\0';
+    memcpy(&name[encoded_len + 1], client_domain_name, client_domain_name_len);
+    name[encoded_len + 1 + client_domain_name_len] = '.';
+    name[encoded_len + 1 + client_domain_name_len + 1] = '\0';
 
     dns_question_t domain;
     domain.name = name;
@@ -567,32 +569,35 @@ static int slipstream_connect(char const* server_name, int server_port,
     return ret;
 }
 
-int picoquic_slipstream_client(int listen_port, char const* server_name, int server_port) {
+int picoquic_slipstream_client(int listen_port, char const* server_name, int server_port, const char* domain_name) {
     /* Start: start the QUIC process */
     int ret = 0;
     picoquic_quic_t* quic = NULL;
     uint64_t current_time = 0;
     picoquic_cnx_t* cnx = NULL;
-    slipstream_client_ctx_t client_ctx = {0};
     char const* ticket_store_filename = SLIPSTREAM_CLIENT_TICKET_STORE;
     char const* token_store_filename = SLIPSTREAM_CLIENT_TOKEN_STORE;
 
-    int mtu = 146;
+    client_domain_name = strdup(domain_name);
+    client_domain_name_len = strlen(domain_name);
+
+    // int mtu = 1200;
     // int mtu = 129;
+    int mtu = 145;
 
     /* Create config */
     picoquic_quic_config_t config;
     picoquic_config_init(&config);
     config.nb_connections = 8;
     // config.log_file = "-";
-#ifndef BUILD_LOGLIB
+#ifdef BUILD_LOGLIB
     config.qlog_dir = SLIPSTREAM_QLOG_DIR;
 #endif
     config.server_port = server_port;
     config.mtu_max = mtu;
     config.initial_send_mtu_ipv4 = mtu;
     config.initial_send_mtu_ipv6 = mtu;
-    config.cc_algo_id = "bbr1";
+    config.cc_algo_id = "cubic";
     config.multipath_option = 0;
     config.use_long_log = 1;
     config.do_preemptive_repeat = 1;
@@ -603,8 +608,11 @@ int picoquic_slipstream_client(int listen_port, char const* server_name, int ser
 
     /* Create the QUIC context for the server */
     current_time = picoquic_current_time();
+    // one connection only, freed in slipstream_client_free_context on picoquic close callback
+    slipstream_client_ctx_t *client_ctx = malloc(sizeof(slipstream_client_ctx_t));
+    memset(client_ctx, 0, sizeof(slipstream_client_ctx_t));
     /* Create QUIC context */
-    quic = picoquic_create_and_configure(&config, slipstream_client_callback, &client_ctx, current_time, NULL);
+    quic = picoquic_create_and_configure(&config, slipstream_client_callback, client_ctx, current_time, NULL);
     if (quic == NULL) {
         fprintf(stderr, "Could not create server context\n");
         return -1;
@@ -617,7 +625,7 @@ int picoquic_slipstream_client(int listen_port, char const* server_name, int ser
 #endif
     picoquic_set_key_log_file_from_env(quic);
 
-    ret = slipstream_connect(server_name, server_port, quic, &cnx, &client_ctx);
+    ret = slipstream_connect(server_name, server_port, quic, &cnx, client_ctx);
     if (ret != 0) {
         fprintf(stderr, "Could not connect to server\n");
         return -1;
@@ -660,7 +668,7 @@ int picoquic_slipstream_client(int listen_port, char const* server_name, int ser
     // And ensure that gso is on
     // $ ethtool -k lo | grep generic-segmentation-offload
     // generic-segmentation-offload: on
-    param.do_not_use_gso = 0;
+    param.do_not_use_gso = 1;
 
     param.is_client = 1;
     param.decode = client_decode;
@@ -670,17 +678,17 @@ int picoquic_slipstream_client(int listen_port, char const* server_name, int ser
     thread_ctx.quic = quic;
     thread_ctx.param = &param;
     thread_ctx.loop_callback = slipstream_client_sockloop_callback;
-    thread_ctx.loop_callback_ctx = &client_ctx;
+    thread_ctx.loop_callback_ctx = client_ctx;
 
     /* Open the wake up pipe or event */
     picoquic_open_network_wake_up(&thread_ctx, &ret);
 
-    client_ctx.thread_ctx = &thread_ctx;
+    client_ctx->thread_ctx = &thread_ctx;
 
     slipstream_client_accepter_args* args = malloc(sizeof(slipstream_client_accepter_args));
     args->fd = listen_sock;
     args->cnx = cnx;
-    args->client_ctx = &client_ctx;
+    args->client_ctx = client_ctx;
     args->thread_ctx = &thread_ctx;
 
     pthread_t thread;
@@ -704,9 +712,6 @@ int picoquic_slipstream_client(int listen_port, char const* server_name, int ser
         fprintf(stderr, "Could not save tokens to <%s>.\n", token_store_filename);
     }
     picoquic_free(quic);
-
-    /* Free the Client context */
-    slipstream_client_free_context(&client_ctx);
 
     return ret;
 }

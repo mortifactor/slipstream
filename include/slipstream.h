@@ -16,14 +16,14 @@ extern "C" {
 
 #define SLIPSTREAM_CLIENT_TICKET_STORE "sample_ticket_store.bin";
 #define SLIPSTREAM_CLIENT_TOKEN_STORE "sample_token_store.bin";
-#define SLIPSTREAM_QLOG_DIR "./qlog/";
+#define SLIPSTREAM_QLOG_DIR "./qlog";
 
 
 
-int picoquic_slipstream_client(int listen_port, char const* server_name, int server_port);
+int picoquic_slipstream_client(int listen_port, char const* server_name, int server_port, const char* domain_name);
 
 int picoquic_slipstream_server(int server_port, const char* pem_cert, const char* pem_key, char const* upstream_name,
-                               int upstream_port);
+                               int upstream_port, const char* domain_name);
 
 #ifdef __cplusplus
 }

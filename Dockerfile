@@ -1,9 +1,19 @@
-FROM debian:bookworm-slim AS builder
+FROM debian:bookworm-slim AS development
 
 WORKDIR /usr/src/app
 
-# apt update without cache and install build-essential and cmake
-RUN apt-get update && apt-get install -y build-essential cmake git pkg-config libssl-dev
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    pkg-config \
+    libssl-dev \
+    ninja-build \
+    gdb-multiarch
+
+FROM development AS builder
 
 COPY . .
 
@@ -15,9 +25,14 @@ FROM debian:bookworm-slim
 
 WORKDIR /usr/src/app
 
-RUN apt-get update && apt-get install -y libssl3
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y \
+    libssl3
 
 COPY ./certs/ ./certs/
+
+RUN mkdir -p ./qlog/
 
 COPY --from=builder /usr/src/app/slipstream .
 

@@ -32,6 +32,9 @@ if(BUILD_LOGLIB)
     list(APPEND PICOQUIC_COMPILE_DEFINITIONS BUILD_LOGLIB)
 endif()
 
+if(POLICY CMP0048)
+    cmake_policy(SET CMP0048 NEW)
+endif()
 add_subdirectory(extern/picoquic)
 
 add_executable(slipstream

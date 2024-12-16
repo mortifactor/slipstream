@@ -20,7 +20,7 @@ extern "C" {
 
 
 
-int picoquic_slipstream_client(int listen_port, char const* server_name, int server_port, const char* domain_name);
+int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_filename, const char* domain_name);
 
 int picoquic_slipstream_server(int server_port, const char* pem_cert, const char* pem_key, char const* upstream_name,
                                int upstream_port, const char* domain_name);

@@ -489,7 +489,6 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
                                char const* upstream_name, int upstream_port, const char* domain_name) {
     /* Start: start the QUIC process with cert and key files */
     int ret = 0;
-    picoquic_quic_t* quic = NULL;
     uint64_t current_time = 0;
     slipstream_server_ctx_t default_context = {0};
     printf("Starting Picoquic Sample server on port %d\n", server_port);
@@ -518,7 +517,7 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     config.initial_send_mtu_ipv4 = mtu;
     config.initial_send_mtu_ipv6 = mtu;
     config.cc_algo_id = "cubic";
-    config.multipath_option = 0;
+    config.multipath_option = 1;
     config.use_long_log = 1;
     config.do_preemptive_repeat = 1;
     config.disable_port_blocking = 1;
@@ -529,7 +528,7 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     /* Create the QUIC context for the server */
     current_time = picoquic_current_time();
     /* Create QUIC context */
-    quic = picoquic_create_and_configure(&config, slipstream_server_callback, &default_context, current_time, NULL);
+    picoquic_quic_t* quic = picoquic_create_and_configure(&config, slipstream_server_callback, &default_context, current_time, NULL);
     if (quic == NULL) {
         fprintf(stderr, "Could not create server context\n");
         return -1;

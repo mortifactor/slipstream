@@ -34,15 +34,14 @@ int main(int argc, char** argv)
         usage(argv[0]);
     }
     else if (strcmp(argv[1], "client") == 0) {
-        if (argc != 6) {
+        if (argc != 5) {
             usage(argv[0]);
         }
         else {
             int local_port = atoi(argv[2]);
-            char const* remote_ip = argv[3];
-            int remote_port = atoi(argv[4]);
-            const char* domain_name = argv[5];
-            exit_code = picoquic_slipstream_client(local_port, remote_ip, remote_port, domain_name);
+            char const* resolver_addresses_filename = argv[3];
+            const char* domain_name = argv[4];
+            exit_code = picoquic_slipstream_client(local_port, resolver_addresses_filename, domain_name);
         }
     }
     else if (strcmp(argv[1], "server") == 0) {

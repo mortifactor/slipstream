@@ -19,6 +19,7 @@
 #include "picoquic_config.h"
 #include "slipstream.h"
 #include "slipstream_inline_dots.h"
+#include "slipstream_resolver_addresses.h"
 #include "SPCDNS/src/dns.h"
 #include "SPCDNS/src/mappings.h"
 
@@ -163,6 +164,8 @@ typedef struct st_slipstream_client_ctx_t {
     picoquic_cnx_t* cnx;
     slipstream_client_stream_ctx_t* first_stream;
     picoquic_network_thread_ctx_t* thread_ctx;
+    struct sockaddr_storage* server_addresses;
+    size_t server_address_count;
 } slipstream_client_ctx_t;
 
 slipstream_client_stream_ctx_t* slipstream_client_create_stream_ctx(picoquic_cnx_t* cnx,
@@ -501,6 +504,17 @@ int slipstream_client_callback(picoquic_cnx_t* cnx,
         break;
     case picoquic_callback_ready:
         fprintf(stdout, "Connection confirmed.\n");
+
+        // add rest of the resolvers
+        for (size_t i = 1; i < client_ctx->server_address_count; i++) {
+            struct sockaddr* server_address = (struct sockaddr*)&client_ctx->server_addresses[i];
+            uint64_t current_time = picoquic_current_time();
+            ret = picoquic_probe_new_path(cnx, server_address, NULL, current_time);
+            if (ret != 0) {
+                fprintf(stderr, "Could not create probe new path\n");
+                return -1;
+            }
+        }
         break;
     default:
         /* unexpected -- just ignore. */
@@ -514,34 +528,35 @@ void client_sighandler(int signum) {
     printf("Signal %d received\n", signum);
 }
 
-static int slipstream_connect(char const* server_name, int server_port,
+static int slipstream_connect(struct sockaddr_storage* server_address,
                                   picoquic_quic_t* quic, picoquic_cnx_t** cnx,
                                   slipstream_client_ctx_t* client_ctx) {
     int ret = 0;
     char const* sni = SLIPSTREAM_SNI;
     uint64_t current_time = picoquic_current_time();
-    struct sockaddr_storage server_address;
 
     *cnx = NULL;
 
-    /* Get the server's address */
-    int is_name = 0;
-    ret = picoquic_get_server_address(server_name, server_port, &server_address, &is_name);
+    char host[NI_MAXHOST];
+    socklen_t addrlen = sizeof(*server_address);
+    ret = getnameinfo((struct sockaddr*)server_address, addrlen,
+                      host, sizeof(host),
+                      NULL, 0,
+                      NI_NUMERICHOST | NI_NUMERICSERV);
     if (ret != 0) {
-        fprintf(stderr, "Cannot get the IP address for <%s> port <%d>", server_name, server_port);
+        fprintf(stderr, "Could not get name info for server address\n");
         return -1;
     }
-    sni = server_name;
 
     /* Initialize the callback context and create the connection context.
      * We use minimal options on the client side, keeping the transport
      * parameter values set by default for picoquic. This could be fixed later.
      */
-    printf("Starting connection to %s, port %d\n", server_name, server_port);
+    printf("Starting connection to %s\n", host);
 
     /* Create a client connection */
     *cnx = picoquic_create_cnx(quic, picoquic_null_connection_id, picoquic_null_connection_id,
-        (struct sockaddr*)&server_address, current_time, 0, sni, SLIPSTREAM_ALPN, 1);
+        (struct sockaddr*)server_address, current_time, 0, sni, SLIPSTREAM_ALPN, 1);
     if (*cnx == NULL) {
         fprintf(stderr, "Could not create connection context\n");
         return -1;
@@ -569,12 +584,10 @@ static int slipstream_connect(char const* server_name, int server_port,
     return ret;
 }
 
-int picoquic_slipstream_client(int listen_port, char const* server_name, int server_port, const char* domain_name) {
+int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_filename, const char* domain_name) {
     /* Start: start the QUIC process */
     int ret = 0;
-    picoquic_quic_t* quic = NULL;
     uint64_t current_time = 0;
-    picoquic_cnx_t* cnx = NULL;
     char const* ticket_store_filename = SLIPSTREAM_CLIENT_TICKET_STORE;
     char const* token_store_filename = SLIPSTREAM_CLIENT_TOKEN_STORE;
 
@@ -593,12 +606,11 @@ int picoquic_slipstream_client(int listen_port, char const* server_name, int ser
 #ifdef BUILD_LOGLIB
     config.qlog_dir = SLIPSTREAM_QLOG_DIR;
 #endif
-    config.server_port = server_port;
     config.mtu_max = mtu;
     config.initial_send_mtu_ipv4 = mtu;
     config.initial_send_mtu_ipv6 = mtu;
     config.cc_algo_id = "cubic";
-    config.multipath_option = 0;
+    config.multipath_option = 1;
     config.use_long_log = 1;
     config.do_preemptive_repeat = 1;
     config.disable_port_blocking = 1;
@@ -612,7 +624,7 @@ int picoquic_slipstream_client(int listen_port, char const* server_name, int ser
     slipstream_client_ctx_t *client_ctx = malloc(sizeof(slipstream_client_ctx_t));
     memset(client_ctx, 0, sizeof(slipstream_client_ctx_t));
     /* Create QUIC context */
-    quic = picoquic_create_and_configure(&config, slipstream_client_callback, client_ctx, current_time, NULL);
+    picoquic_quic_t* quic = picoquic_create_and_configure(&config, slipstream_client_callback, client_ctx, current_time, NULL);
     if (quic == NULL) {
         fprintf(stderr, "Could not create server context\n");
         return -1;
@@ -625,7 +637,15 @@ int picoquic_slipstream_client(int listen_port, char const* server_name, int ser
 #endif
     picoquic_set_key_log_file_from_env(quic);
 
-    ret = slipstream_connect(server_name, server_port, quic, &cnx, client_ctx);
+    /* Read the server address list from the file */
+    client_ctx->server_addresses = read_resolver_addresses(resolver_addresses_filename, &client_ctx->server_address_count);
+    if (!client_ctx->server_addresses) {
+        printf("Failed to read IP addresses\n");
+        return 1;
+    }
+
+    picoquic_cnx_t* cnx = NULL;
+    ret = slipstream_connect(client_ctx->server_addresses, quic, &cnx, client_ctx);
     if (ret != 0) {
         fprintf(stderr, "Could not connect to server\n");
         return -1;

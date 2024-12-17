@@ -6,31 +6,49 @@
 #ifdef BUILD_LOGLIB
 #include <autoqlog.h>
 #endif
+#include <picohash.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <arpa/nameser.h>
 #include <sys/ioctl.h>
 #include <sys/param.h>
 #include <sys/poll.h>
+#include <assert.h>
 
 #include "lua-resty-base-encoding-base32.h"
 #include "picoquic_config.h"
 #include "slipstream.h"
 #include "slipstream_inline_dots.h"
-#include "slipstream_server_circular_query_buffer.h"
+#include "slipstream_packet.h"
+#include "slipstream_dns_request_buffer.h"
+#include "slipstream_utils.h"
 #include "SPCDNS/src/dns.h"
 #include "SPCDNS/src/mappings.h"
 
-circular_query_buffer_t server_cqb = {0};
 char* server_domain_name = NULL;
 size_t server_domain_name_len = 0;
 
-ssize_t server_encode(unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_size) {
-    const dns_query_t *query = (dns_query_t *) circular_query_buffer_get_read_slot(&server_cqb);
-    if (query == NULL) {
+slipstream_dns_request_buffer_t slipstream_server_dns_request_buffer;
+
+ssize_t server_encode(picoquic_quic_t* quic, picoquic_cnx_t* cnx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_size, struct sockaddr_storage *peer_addr) {
+    // we don't support segmentation in the server
+    assert(segment_size == NULL || *segment_size == 0 || *segment_size == src_buf_len);
+
+    picoquic_connection_id_t initial_cnxid = picoquic_get_initial_cnxid(cnx);
+
+    slipstream_cnxid_dns_request_buffer_t* cnxid_buffer = slipstream_dns_request_buffer_get_cnxid_buffer(
+        &slipstream_server_dns_request_buffer, &initial_cnxid, false);
+    if (cnxid_buffer == NULL) {
+        fprintf(stderr, "error getting cnxid buffer\n");
+        return -1;
+    }
+
+    slot_t *slot = slipstream_dns_request_buffer_get_read_slot(&slipstream_server_dns_request_buffer, cnxid_buffer);
+    if (slot == NULL) {
         fprintf(stderr, "no available DNS request to respond to\n");
         return -1;
     }
+    dns_query_t *query = (dns_query_t *) slot->dns_decoded;
 
     if (query->questions == NULL) {
         fprintf(stderr, "no questions in DNS request\n");
@@ -69,14 +87,29 @@ ssize_t server_encode(unsigned char** dest_buf, const unsigned char* src_buf, si
     }
     *dest_buf = (unsigned char*)packet;
 
+    memcpy(peer_addr, &slot->peer_addr, sizeof(struct sockaddr_storage));
+
     return packet_len;
 }
 
-ssize_t server_decode(const unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage *from, struct sockaddr_storage *dest) {
+ssize_t server_decode(picoquic_quic_t* quic, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage *peer_addr) {
     *dest_buf = NULL;
 
-    dns_decoded_t* packet = circular_query_buffer_get_write_slot(&server_cqb);
+    slot_t* slot = slipstream_dns_request_buffer_get_write_slot(&slipstream_server_dns_request_buffer);
+    if (slot == NULL) {
+        fprintf(stderr, "error getting write slot\n");
+        sockaddr_dummy(peer_addr);
+        return -1;
+    }
+
+    // DNS packets arrive from random source ports, so:
+    // * save the original address in the dns query slot
+    // * set the source address to a dummy address (to prevent QUIC from using it)
+    memcpy(&slot->peer_addr, peer_addr, sizeof(struct sockaddr_storage));
+    sockaddr_dummy(peer_addr);
+
     size_t packet_len = DNS_DECODEBUF_4K * sizeof(dns_decoded_t);
+    dns_decoded_t* packet = slot->dns_decoded;
     const dns_rcode_t rc = dns_decode(packet, &packet_len, (const dns_packet_t*) src_buf, src_buf_len);
     if (rc != RCODE_OKAY) {
         fprintf(stderr, "dns_decode() = (%d) %s\n", rc, dns_rcode_text(rc));
@@ -114,6 +147,42 @@ ssize_t server_decode(const unsigned char** dest_buf, const unsigned char* src_b
     if (decoded_len == (size_t) -1) {
         free(decoded_buf);
         fprintf(stderr, "error decoding base32: %lu\n", decoded_len);
+        return -1;
+    }
+
+    picoquic_connection_id_t incoming_src_connection_id = {0};
+    picoquic_connection_id_t incoming_dest_connection_id; // sure to be set by parser
+    bool is_poll_packet = false;
+    // ReSharper disable once CppDFAUnreachableCode
+    const int ret = slipstream_packet_parse(decoded_buf, decoded_len, PICOQUIC_SHORT_HEADER_CONNECTION_ID_SIZE,
+        &incoming_src_connection_id, &incoming_dest_connection_id, &is_poll_packet);
+    if (ret != 0) {
+        free(decoded_buf);
+        fprintf(stderr, "error parsing slipstream packet: %d\n", ret);
+        return -1;
+    }
+
+    picoquic_cnx_t *cnx = picoquic_cnx_by_id_(quic, incoming_dest_connection_id);
+    picoquic_connection_id_t initial_cnxid;
+    if (cnx == NULL) {
+        initial_cnxid = incoming_dest_connection_id;
+    } else {
+        initial_cnxid = picoquic_get_initial_cnxid(cnx);
+    }
+
+    slipstream_cnxid_dns_request_buffer_t* cnxid_buffer = slipstream_dns_request_buffer_get_cnxid_buffer(
+        &slipstream_server_dns_request_buffer, &initial_cnxid, true);
+    if (cnxid_buffer == NULL) {
+        free(decoded_buf);
+        fprintf(stderr, "error getting or creating cnxid buffer\n");
+        return -1;
+    }
+
+    slipstream_dns_request_buffer_commit_slot_to_cnxid_buffer(&slipstream_server_dns_request_buffer, cnxid_buffer, slot);
+
+    if (is_poll_packet) {
+        free(decoded_buf);
+        return 0;
     }
 
     *dest_buf = decoded_buf;
@@ -540,6 +609,8 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     debug_printf_push_stream(stderr);
 #endif
     picoquic_set_key_log_file_from_env(quic);
+
+    slipstream_dns_request_buffer_init(&slipstream_server_dns_request_buffer);
 
     picoquic_packet_loop_param_t param = {0};
     param.local_af = AF_INET;

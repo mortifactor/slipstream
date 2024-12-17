@@ -26,7 +26,7 @@
 char* client_domain_name = NULL;
 size_t client_domain_name_len = 0;
 
-ssize_t client_encode_segment(dns_packet_t* packet, size_t* packet_len, const unsigned char* src_buf, size_t src_buf_len) {
+ssize_t client_encode_segment(picoquic_quic_t* quic, dns_packet_t* packet, size_t* packet_len, const unsigned char* src_buf, size_t src_buf_len) {
     edns0_opt_t opt;
     dns_answer_t edns;
 
@@ -66,12 +66,12 @@ ssize_t client_encode_segment(dns_packet_t* packet, size_t* packet_len, const un
     return 0;
 }
 
-ssize_t client_encode(unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len) {
+ssize_t client_encode(picoquic_quic_t* quic, picoquic_cnx_t* last_cnx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len, struct sockaddr_storage* peer_addr) {
     // optimize path for single segment
     if (src_buf_len <= *segment_len) {
         size_t packet_len = MAX_DNS_QUERY_SIZE;
         unsigned char* packet = malloc(packet_len);
-        const ssize_t ret = client_encode_segment((dns_packet_t*) packet, &packet_len, src_buf, src_buf_len);
+        const ssize_t ret = client_encode_segment(quic, (dns_packet_t*) packet, &packet_len, src_buf, src_buf_len);
         if (ret < 0) {
             free(packet);
             return -1;
@@ -90,7 +90,7 @@ ssize_t client_encode(unsigned char** dest_buf, const unsigned char* src_buf, si
     size_t first_packet_len = 0;
     for (size_t i = 0; i < num_segments; i++) {
         size_t packet_len = MAX_DNS_QUERY_SIZE;
-        const ssize_t ret = client_encode_segment((dns_packet_t*) current_packet, &packet_len, segment, *segment_len);
+        const ssize_t ret = client_encode_segment(quic, (dns_packet_t*) current_packet, &packet_len, segment, *segment_len);
         if (ret < 0) {
             free(packets);
             return -1;
@@ -117,7 +117,7 @@ ssize_t client_encode(unsigned char** dest_buf, const unsigned char* src_buf, si
     return current_packet - packets;
 }
 
-ssize_t client_decode(const unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage* from, struct sockaddr_storage* dest) {
+ssize_t client_decode(picoquic_quic_t* quic, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage* peer_addr) {
     *dest_buf = NULL;
 
     size_t bufsize = DNS_DECODEBUF_4K * sizeof(dns_decoded_t);

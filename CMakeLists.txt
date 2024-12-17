@@ -41,13 +41,15 @@ add_executable(slipstream
         src/slipstream.c
         src/slipstream_client.c
         src/slipstream_server.c
-        src/slipstream_server_circular_query_buffer.c
+        src/slipstream_dns_request_buffer.c
         src/slipstream_inline_dots.c
         src/slipstream_resolver_addresses.c
+        src/slipstream_utils.c
         include/slipstream.h
-        include/slipstream_server_circular_query_buffer.h
+        include/slipstream_dns_request_buffer.h
         include/slipstream_inline_dots.h
         include/slipstream_resolver_addresses.h
+        include/slipstream_utils.h
 
         extern/lua-resty-base-encoding/b32_data.h
         extern/lua-resty-base-encoding/base32.c

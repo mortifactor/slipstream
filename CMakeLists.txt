@@ -43,11 +43,13 @@ add_executable(slipstream
         src/slipstream_server.c
         src/slipstream_dns_request_buffer.c
         src/slipstream_inline_dots.c
+        src/slipstream_packet.c
         src/slipstream_resolver_addresses.c
         src/slipstream_utils.c
         include/slipstream.h
         include/slipstream_dns_request_buffer.h
         include/slipstream_inline_dots.h
+        include/slipstream_packet.h
         include/slipstream_resolver_addresses.h
         include/slipstream_utils.h
 

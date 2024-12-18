@@ -99,7 +99,7 @@ ssize_t server_encode(picoquic_quic_t* quic, picoquic_cnx_t* cnx, unsigned char*
     return packet_len;
 }
 
-ssize_t server_decode(picoquic_quic_t* quic, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage *peer_addr) {
+ssize_t server_decode(picoquic_quic_t* quic, picoquic_socket_ctx_t* s_ctx, size_t s_ctx_len, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage *peer_addr, struct sockaddr_storage *local_addr) {
     *dest_buf = NULL;
 
     slot_t* slot = slipstream_dns_request_buffer_get_write_slot(&slipstream_server_dns_request_buffer);

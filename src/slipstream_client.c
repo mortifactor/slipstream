@@ -19,6 +19,7 @@
 #include "picoquic_config.h"
 #include "slipstream.h"
 #include "slipstream_inline_dots.h"
+#include "slipstream_packet.h"
 #include "slipstream_resolver_addresses.h"
 #include "SPCDNS/src/dns.h"
 #include "SPCDNS/src/mappings.h"
@@ -68,7 +69,7 @@ ssize_t client_encode_segment(picoquic_quic_t* quic, dns_packet_t* packet, size_
     return 0;
 }
 
-ssize_t client_encode(picoquic_quic_t* quic, picoquic_cnx_t* last_cnx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len, struct sockaddr_storage* peer_addr) {
+ssize_t client_encode(picoquic_quic_t* quic, picoquic_cnx_t* cnx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len, struct sockaddr_storage* peer_addr) {
     // optimize path for single segment
     if (src_buf_len <= *segment_len) {
         size_t packet_len = MAX_DNS_QUERY_SIZE;
@@ -119,7 +120,7 @@ ssize_t client_encode(picoquic_quic_t* quic, picoquic_cnx_t* last_cnx, unsigned 
     return current_packet - packets;
 }
 
-ssize_t client_decode(picoquic_quic_t* quic, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage* peer_addr) {
+ssize_t client_decode(picoquic_quic_t* quic, picoquic_socket_ctx_t* s_ctx, size_t s_ctx_len, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
     *dest_buf = NULL;
 
     size_t bufsize = DNS_DECODEBUF_4K * sizeof(dns_decoded_t);
@@ -155,6 +156,66 @@ ssize_t client_decode(picoquic_quic_t* quic, unsigned char** dest_buf, const uns
 
     *dest_buf = malloc(answer_txt->len);
     memcpy((void*)*dest_buf, answer_txt->text, answer_txt->len);
+
+
+    picoquic_connection_id_t incoming_src_connection_id = {0};
+    picoquic_connection_id_t incoming_dest_connection_id; // sure to be set by parser
+    bool is_poll_packet = false;
+    int ret = slipstream_packet_parse(*dest_buf, answer_txt->len, PICOQUIC_SHORT_HEADER_CONNECTION_ID_SIZE,
+        &incoming_src_connection_id, &incoming_dest_connection_id, &is_poll_packet);
+    if (ret != 0 || is_poll_packet) {
+        fprintf(stderr, "error parsing slipstream packet: %d\n", ret);
+        return answer_txt->len;
+    }
+
+    const SOCKET_TYPE send_socket = picoquic_socket_get_send_socket(s_ctx, s_ctx_len, peer_addr, local_addr);
+    if (send_socket == INVALID_SOCKET) {
+        fprintf(stderr, "no valid socket found for poll packet\n");
+        return answer_txt->len;
+    }
+
+    // get active destination connection id on this ctx
+    picoquic_cnx_t* cnx = picoquic_cnx_by_id_(quic, incoming_dest_connection_id);
+    picoquic_connection_id_t outgoing_dest_connection_id = cnx->path[0]->p_remote_cnxid->cnx_id;
+    if (outgoing_dest_connection_id.id_len == 0) {
+        // p_remote_cnxid is not set yet when we are receiving the first server response
+        outgoing_dest_connection_id = incoming_src_connection_id;
+    }
+
+    const int poll_ratio = 1;
+    for (int j = 0; j < poll_ratio; ++j) {
+        uint8_t* poll_packet_buf;
+        size_t poll_packet_len;
+        ret = slipstream_packet_create_poll(&poll_packet_buf, &poll_packet_len, outgoing_dest_connection_id);
+        if (ret < 0) {
+            fprintf(stderr, "error creating poll packet\n");
+            return answer_txt->len;
+        }
+
+        unsigned char* encoded;
+        ssize_t encoded_len = client_encode(quic, cnx, &encoded, poll_packet_buf, poll_packet_len, &poll_packet_len,
+            peer_addr);
+        if (encoded_len <= 0) {
+            fprintf(stderr, "error encoding poll packet\n");
+            free(poll_packet_buf);
+            return answer_txt->len;
+        }
+
+        int sock_err = 0;
+        ret = picoquic_sendmsg(send_socket,
+            (struct sockaddr*)peer_addr, (struct sockaddr*)local_addr, 0,
+            (const char*)encoded, encoded_len, 0, &sock_err);
+        if (ret < 0) {
+            fprintf(stderr, "Error sending poll packet, ret=%d, sock_err=%d %s\n", ret, sock_err, strerror(sock_err));
+            free(poll_packet_buf);
+            free(encoded);
+            return answer_txt->len;
+        }
+
+        free(poll_packet_buf);
+        free(encoded);
+    }
+
 
     return answer_txt->len;
 }

@@ -64,6 +64,13 @@ ssize_t server_encode(picoquic_quic_t* quic, picoquic_cnx_t* cnx, unsigned char*
     answer_txt.text = (char *)src_buf;
     answer_txt.len = src_buf_len;
 
+    dns_answer_t edns = {0};
+    edns.opt.name = ".";
+    edns.opt.type = RR_OPT;
+    edns.opt.class = CLASS_UNKNOWN;
+    edns.opt.ttl = 0;
+    edns.opt.udp_payload = 4096;
+
     dns_query_t response = {0};
     response.id = query->id;
     response.query = false;
@@ -74,8 +81,8 @@ ssize_t server_encode(picoquic_quic_t* quic, picoquic_cnx_t* cnx, unsigned char*
     response.questions = query->questions;
     response.ancount = 1;
     response.answers = (dns_answer_t *)&answer_txt;
-    response.arcount = 0; // TODO: set to 1 for EDNS0
-    response.additional = NULL;
+    response.arcount = 1;
+    response.additional = &edns;
 
     dns_packet_t* packet = malloc(MAX_UDP_PACKET_SIZE);
     size_t packet_len = MAX_UDP_PACKET_SIZE;

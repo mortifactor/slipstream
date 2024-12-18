@@ -27,9 +27,6 @@ char* client_domain_name = NULL;
 size_t client_domain_name_len = 0;
 
 ssize_t client_encode_segment(picoquic_quic_t* quic, dns_packet_t* packet, size_t* packet_len, const unsigned char* src_buf, size_t src_buf_len) {
-    edns0_opt_t opt;
-    dns_answer_t edns;
-
     char name[255];
     const size_t len = b32_encode(&name[0], (const char*) src_buf, src_buf_len, true, false);
     const size_t encoded_len = slipstream_inline_dotify(name, 255, len);
@@ -39,10 +36,17 @@ ssize_t client_encode_segment(picoquic_quic_t* quic, dns_packet_t* packet, size_
     name[encoded_len + 1 + client_domain_name_len] = '.';
     name[encoded_len + 1 + client_domain_name_len + 1] = '\0';
 
-    dns_question_t domain;
-    domain.name = name;
-    domain.type = RR_TXT;
-    domain.class = CLASS_IN;
+    dns_question_t question;
+    question.name = name;
+    question.type = RR_TXT;
+    question.class = CLASS_IN;
+
+    dns_answer_t edns = {0};
+    edns.opt.name = ".";
+    edns.opt.type = RR_OPT;
+    edns.opt.class = CLASS_UNKNOWN;
+    edns.opt.ttl = 0;
+    edns.opt.udp_payload = 4096;
 
     dns_query_t query = {0};
     query.id = rand() % UINT16_MAX;
@@ -51,11 +55,9 @@ ssize_t client_encode_segment(picoquic_quic_t* quic, dns_packet_t* packet, size_
     query.rd = true;
     query.rcode = RCODE_OKAY;
     query.qdcount = 1;
-    query.questions = &domain;
-    query.arcount = 0; // TODO: set to 1 for EDNS0
-    query.additional = NULL;
-
-    // TODO: add EDNS0
+    query.questions = &question;
+    query.arcount = 1;
+    query.additional = &edns;
 
     const dns_rcode_t rc = dns_encode(packet, packet_len, &query);
     if (rc != RCODE_OKAY) {
@@ -132,6 +134,11 @@ ssize_t client_decode(picoquic_quic_t* quic, unsigned char** dest_buf, const uns
 
     if (query->query == 1) {
         fprintf(stderr, "dns record is not a response\n");
+        return -1;
+    }
+
+    if (query->rcode != RCODE_OKAY) {
+        fprintf(stderr, "dns record rcode not okay: %d\n", query->rcode);
         return -1;
     }
 

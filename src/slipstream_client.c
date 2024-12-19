@@ -47,7 +47,7 @@ ssize_t client_encode_segment(picoquic_quic_t* quic, dns_packet_t* packet, size_
     edns.opt.type = RR_OPT;
     edns.opt.class = CLASS_UNKNOWN;
     edns.opt.ttl = 0;
-    edns.opt.udp_payload = 4096;
+    edns.opt.udp_payload = 1232;
 
     dns_query_t query = {0};
     query.id = rand() % UINT16_MAX;
@@ -62,14 +62,14 @@ ssize_t client_encode_segment(picoquic_quic_t* quic, dns_packet_t* packet, size_
 
     const dns_rcode_t rc = dns_encode(packet, packet_len, &query);
     if (rc != RCODE_OKAY) {
-        fprintf(stderr, "dns_encode() = (%d) %s\n", rc, dns_rcode_text(rc));
+        DBG_PRINTF( "dns_encode() = (%d) %s\n", rc, dns_rcode_text(rc));
         return -1;
     }
 
     return 0;
 }
 
-ssize_t client_encode(picoquic_quic_t* quic, picoquic_cnx_t* cnx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len, struct sockaddr_storage* peer_addr) {
+ssize_t client_encode(picoquic_quic_t* quic, picoquic_cnx_t* cnx, picoquic_socket_ctx_t* s_ctx, size_t s_ctx_len, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
     // optimize path for single segment
     if (src_buf_len <= *segment_len) {
         size_t packet_len = MAX_DNS_QUERY_SIZE;
@@ -124,34 +124,34 @@ ssize_t client_decode(picoquic_quic_t* quic, picoquic_socket_ctx_t* s_ctx, size_
     *dest_buf = NULL;
 
     size_t bufsize = DNS_DECODEBUF_4K * sizeof(dns_decoded_t);
-    dns_decoded_t decoded[DNS_DECODEBUF_4K];
+    dns_decoded_t decoded[DNS_DECODEBUF_4K] = {0};
     const dns_rcode_t rc = dns_decode(decoded, &bufsize, (const dns_packet_t*) src_buf, src_buf_len);
     if (rc != RCODE_OKAY) {
-        fprintf(stderr, "dns_decode() = (%d) %s\n", rc, dns_rcode_text(rc));
+        DBG_PRINTF("dns_decode() = (%d) %s", rc, dns_rcode_text(rc));
         return -1;
     }
 
     const dns_query_t *query = (dns_query_t *)decoded;
 
     if (query->query == 1) {
-        fprintf(stderr, "dns record is not a response\n");
-        return -1;
+        DBG_PRINTF("[%d] dns record is not a response", query->id, NULL);
+        return 0;
     }
 
     if (query->rcode != RCODE_OKAY) {
-        fprintf(stderr, "dns record rcode not okay: %d\n", query->rcode);
-        return -1;
+        DBG_PRINTF("[%d] dns record rcode not okay: %d", query->id, query->rcode);
+        return 0;
     }
 
     if (query->ancount != 1) {
-        fprintf(stderr, "dns record should contain exactly one answer\n");
-        return -1;
+        DBG_PRINTF("[%d] dns record should contain exactly one answer", query->id);
+        return 0;
     }
 
     dns_txt_t *answer_txt = (dns_txt_t*) &query->answers[0];
     if (answer_txt->type != RR_TXT) {
-        fprintf(stderr, "answer type is not TXT\n");
-        return -1;
+        DBG_PRINTF("[%d] answer type is not TXT", query->id, NULL);
+        return 0;
     }
 
     *dest_buf = malloc(answer_txt->len);
@@ -164,13 +164,13 @@ ssize_t client_decode(picoquic_quic_t* quic, picoquic_socket_ctx_t* s_ctx, size_
     int ret = slipstream_packet_parse(*dest_buf, answer_txt->len, PICOQUIC_SHORT_HEADER_CONNECTION_ID_SIZE,
         &incoming_src_connection_id, &incoming_dest_connection_id, &is_poll_packet);
     if (ret != 0 || is_poll_packet) {
-        fprintf(stderr, "error parsing slipstream packet: %d\n", ret);
+        DBG_PRINTF("[%d] error parsing slipstream packet: %d", query->id, ret);
         return answer_txt->len;
     }
 
     const SOCKET_TYPE send_socket = picoquic_socket_get_send_socket(s_ctx, s_ctx_len, peer_addr, local_addr);
     if (send_socket == INVALID_SOCKET) {
-        fprintf(stderr, "no valid socket found for poll packet\n");
+        DBG_PRINTF("[%d] no valid socket found for poll packet", query->id);
         return answer_txt->len;
     }
 
@@ -188,15 +188,15 @@ ssize_t client_decode(picoquic_quic_t* quic, picoquic_socket_ctx_t* s_ctx, size_
         size_t poll_packet_len;
         ret = slipstream_packet_create_poll(&poll_packet_buf, &poll_packet_len, outgoing_dest_connection_id);
         if (ret < 0) {
-            fprintf(stderr, "error creating poll packet\n");
+            DBG_PRINTF("error creating poll packet", NULL);
             return answer_txt->len;
         }
 
         unsigned char* encoded;
-        ssize_t encoded_len = client_encode(quic, cnx, &encoded, poll_packet_buf, poll_packet_len, &poll_packet_len,
-            peer_addr);
+        ssize_t encoded_len = client_encode(quic, cnx, s_ctx, s_ctx_len, &encoded, poll_packet_buf, poll_packet_len,
+            &poll_packet_len, peer_addr, local_addr);
         if (encoded_len <= 0) {
-            fprintf(stderr, "error encoding poll packet\n");
+            DBG_PRINTF("error encoding poll packet", NULL);
             free(poll_packet_buf);
             return answer_txt->len;
         }
@@ -206,7 +206,7 @@ ssize_t client_decode(picoquic_quic_t* quic, picoquic_socket_ctx_t* s_ctx, size_
             (struct sockaddr*)peer_addr, (struct sockaddr*)local_addr, 0,
             (const char*)encoded, encoded_len, 0, &sock_err);
         if (ret < 0) {
-            fprintf(stderr, "Error sending poll packet, ret=%d, sock_err=%d %s\n", ret, sock_err, strerror(sock_err));
+            DBG_PRINTF("Error sending poll packet, ret=%d, sock_err=%d %s", ret, sock_err, strerror(sock_err));
             free(poll_packet_buf);
             free(encoded);
             return answer_txt->len;
@@ -577,6 +577,14 @@ int slipstream_client_callback(picoquic_cnx_t* cnx,
         for (size_t i = 1; i < client_ctx->server_address_count; i++) {
             struct sockaddr* server_address = (struct sockaddr*)&client_ctx->server_addresses[i];
             uint64_t current_time = picoquic_current_time();
+            // convert server address to string
+            char host[NI_MAXHOST];
+            socklen_t addrlen = sizeof(*server_address);
+            ret = getnameinfo(server_address, addrlen, host, sizeof(host), NULL, 0, NI_NUMERICHOST | NI_NUMERICSERV);
+            if (ret == 0) {
+                printf("Probing path: %s", host);
+            }
+
             ret = picoquic_probe_new_path(cnx, server_address, NULL, current_time);
             if (ret != 0) {
                 fprintf(stderr, "Could not create probe new path\n");
@@ -629,6 +637,9 @@ static int slipstream_connect(struct sockaddr_storage* server_address,
         fprintf(stderr, "Could not create connection context\n");
         return -1;
     }
+
+    // 400ms
+    picoquic_enable_keep_alive(*cnx, 400000);
 
     /* Document connection in client's context */
     client_ctx->cnx = *cnx;
@@ -704,6 +715,7 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     debug_printf_push_stream(stderr);
 #endif
     picoquic_set_key_log_file_from_env(quic);
+    // TODO: idle timeout?
 
     /* Read the server address list from the file */
     client_ctx->server_addresses = read_resolver_addresses(resolver_addresses_filename, &client_ctx->server_address_count);

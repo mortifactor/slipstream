@@ -28,7 +28,7 @@ void slipstream_dns_request_buffer_init(slipstream_dns_request_buffer_t* buffer)
     buffer->tail = NULL;
 
     for (int i = 0; i < GLOBAL_BUFFER_SIZE; i++) {
-        slot_t* element = &buffer->elements[i];
+        slot_t* element = &buffer->slots[i];
         element->buffer_next = buffer->free;
         element->buffer_prev = NULL;
         buffer->free = element;
@@ -70,31 +70,42 @@ slipstream_cnxid_dns_request_buffer_t* slipstream_dns_request_buffer_get_cnxid_b
         fprintf(stderr, "error adding a cnx buffer for a new cnx id\n");
         return NULL;
     }
+
+    buffer->cnxid_buffers_len++;
+    slipstream_cnxid_dns_request_buffer_t** cnxid_buffers = realloc(buffer->cnxid_buffers,
+        buffer->cnxid_buffers_len * sizeof(slipstream_cnxid_dns_request_buffer_t*));
+    if (cnxid_buffers == NULL) {
+        return NULL;
+    }
+    buffer->cnxid_buffers = cnxid_buffers;
+    buffer->cnxid_buffers[buffer->cnxid_buffers_len - 1] = new_key->cnxid_buffer;
+
     return new_key->cnxid_buffer;
 }
 
 
-void slipstream_cnxid_dns_request_buffer_free_slot(slipstream_cnxid_dns_request_buffer_t* cnxid_buffer, slot_t* slot) {
-    if (slot->cnxid_buffer_prev != NULL) {
-        slot->cnxid_buffer_prev->cnxid_buffer_next = slot->cnxid_buffer_next;
-    }
-
-    if (slot->cnxid_buffer_next != NULL) {
-        slot->cnxid_buffer_next->cnxid_buffer_prev = slot->cnxid_buffer_prev;
-    }
-
-    if (cnxid_buffer->head == slot) {
-        cnxid_buffer->head = slot->cnxid_buffer_next;
-    }
-
-    if (cnxid_buffer->tail == slot) {
-        cnxid_buffer->tail = slot->cnxid_buffer_prev;
-    }
-
-    slot->cnxid_buffer = NULL;
-}
-
 void slipstream_dns_request_buffer_free_slot(slipstream_dns_request_buffer_t* buffer, slot_t* slot) {
+    slipstream_cnxid_dns_request_buffer_t* cnxid_buffer = slot->cnxid_buffer;
+    if (cnxid_buffer != NULL) {
+        if (slot->cnxid_buffer_prev != NULL) {
+            slot->cnxid_buffer_prev->cnxid_buffer_next = slot->cnxid_buffer_next;
+        }
+
+        if (slot->cnxid_buffer_next != NULL) {
+            slot->cnxid_buffer_next->cnxid_buffer_prev = slot->cnxid_buffer_prev;
+        }
+
+        if (cnxid_buffer->head == slot) {
+            cnxid_buffer->head = slot->cnxid_buffer_next;
+        }
+
+        if (cnxid_buffer->tail == slot) {
+            cnxid_buffer->tail = slot->cnxid_buffer_prev;
+        }
+
+        slot->cnxid_buffer = NULL;
+    }
+
     if (slot->buffer_prev != NULL) {
         slot->buffer_prev->buffer_next = slot->buffer_next;
     }
@@ -116,14 +127,12 @@ void slipstream_dns_request_buffer_free_slot(slipstream_dns_request_buffer_t* bu
     }
     slot->buffer_next = buffer->free;
     buffer->free = slot;
+    slot->query_id = 0;
 }
 
 slot_t* slipstream_dns_request_buffer_get_write_slot(slipstream_dns_request_buffer_t* buffer) {
     if (!buffer->free) {
-        slot_t* tail = buffer->tail;
-        assert(tail != NULL);
-        slipstream_cnxid_dns_request_buffer_free_slot(tail->cnxid_buffer, tail);
-        slipstream_dns_request_buffer_free_slot(buffer, tail);
+        return NULL;
     }
 
     // Get the first free element
@@ -167,15 +176,12 @@ void slipstream_dns_request_buffer_commit_slot_to_cnxid_buffer(slipstream_dns_re
 }
 
 slot_t* slipstream_dns_request_buffer_get_read_slot(slipstream_dns_request_buffer_t* buffer,
-                                                    slipstream_cnxid_dns_request_buffer_t* cnxid_buffer) {
+                                                             slipstream_cnxid_dns_request_buffer_t* cnxid_buffer) {
     // Get the last element from the cnxid buffer
     slot_t* slot = cnxid_buffer->tail;
     if (!slot) {
         return NULL;
     }
-
-    slipstream_cnxid_dns_request_buffer_free_slot(slot->cnxid_buffer, slot);
-    slipstream_dns_request_buffer_free_slot(buffer, slot);
 
     return slot;
 }

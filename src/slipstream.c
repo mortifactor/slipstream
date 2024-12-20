@@ -34,25 +34,27 @@ int main(int argc, char** argv)
         usage(argv[0]);
     }
     else if (strcmp(argv[1], "client") == 0) {
-        if (argc != 5) {
+        if (argc != 6) {
             usage(argv[0]);
         }
         else {
             int local_port = atoi(argv[2]);
             char const* resolver_addresses_filename = argv[3];
             const char* domain_name = argv[4];
-            exit_code = picoquic_slipstream_client(local_port, resolver_addresses_filename, domain_name);
+            const char* cc_algo_id = argv[5];
+            exit_code = picoquic_slipstream_client(local_port, resolver_addresses_filename, domain_name, cc_algo_id);
         }
     }
     else if (strcmp(argv[1], "server") == 0) {
-        if (argc != 8) {
+        if (argc != 9) {
             usage(argv[0]);
         }
         else {
             int server_port = get_port(argv[0], argv[2]);
             int remote_port = get_port(argv[0], argv[6]);
             const char* domain_name = argv[7];
-            exit_code = picoquic_slipstream_server(server_port, argv[3], argv[4], argv[5], remote_port, domain_name);
+            const char* cc_algo_id = argv[8];
+            exit_code = picoquic_slipstream_server(server_port, argv[3], argv[4], argv[5], remote_port, domain_name, cc_algo_id);
         }
     }
     else

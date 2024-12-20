@@ -735,7 +735,7 @@ static int slipstream_connect(struct sockaddr_storage* server_address,
     return ret;
 }
 
-int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_filename, const char* domain_name) {
+int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_filename, const char* domain_name, const char* cc_algo_id) {
     /* Start: start the QUIC process */
     int ret = 0;
     uint64_t current_time = 0;
@@ -760,7 +760,7 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     config.mtu_max = mtu;
     config.initial_send_mtu_ipv4 = mtu;
     config.initial_send_mtu_ipv6 = mtu;
-    config.cc_algo_id = "cubic";
+    config.cc_algo_id = cc_algo_id;
     config.multipath_option = 1;
     config.use_long_log = 1;
     config.do_preemptive_repeat = 1;

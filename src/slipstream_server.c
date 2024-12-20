@@ -649,7 +649,7 @@ void server_sighandler(int signum) {
 }
 
 int picoquic_slipstream_server(int server_port, const char* server_cert, const char* server_key,
-                               char const* upstream_name, int upstream_port, const char* domain_name) {
+                               char const* upstream_name, int upstream_port, const char* domain_name, const char* cc_algo_id) {
     /* Start: start the QUIC process with cert and key files */
     int ret = 0;
     uint64_t current_time = 0;
@@ -679,7 +679,7 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     config.mtu_max = mtu;
     config.initial_send_mtu_ipv4 = mtu;
     config.initial_send_mtu_ipv6 = mtu;
-    config.cc_algo_id = "cubic";
+    config.cc_algo_id = cc_algo_id;
     config.multipath_option = 1;
     config.use_long_log = 1;
     config.do_preemptive_repeat = 1;

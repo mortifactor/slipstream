@@ -29,7 +29,7 @@ size_t server_domain_name_len = 0;
 
 slipstream_dns_request_buffer_t slipstream_server_dns_request_buffer;
 
-ssize_t respond_and_free_slot(slot_t* slot, const picoquic_socket_ctx_t* s_ctx, const size_t s_ctx_len, dns_rcode_t rcode) {
+ssize_t respond_and_free_slot(slot_t* slot, const picoquic_socket_ctxs_t* s_ctxs, dns_rcode_t rcode) {
     const dns_query_t *query = (dns_query_t *) slot->dns_decoded;
 
     dns_query_t response = {0};
@@ -55,7 +55,7 @@ ssize_t respond_and_free_slot(slot_t* slot, const picoquic_socket_ctx_t* s_ctx, 
 
     const struct sockaddr_storage *peer_addr = &slot->peer_addr;
     const struct sockaddr_storage *local_addr = &slot->local_addr;
-    const SOCKET_TYPE send_socket = picoquic_socket_get_send_socket(s_ctx, s_ctx_len, peer_addr, local_addr);
+    const SOCKET_TYPE send_socket = picoquic_socket_get_send_socket(s_ctxs, peer_addr, local_addr);
     if (send_socket == INVALID_SOCKET) {
         DBG_PRINTF("no valid socket found for poll packet", NULL);
         return -1;
@@ -73,7 +73,7 @@ ssize_t respond_and_free_slot(slot_t* slot, const picoquic_socket_ctx_t* s_ctx, 
     return 0;
 }
 
-ssize_t server_encode(picoquic_quic_t* quic, picoquic_cnx_t* cnx, picoquic_socket_ctx_t* s_ctx, size_t s_ctx_len,
+ssize_t server_encode(picoquic_quic_t* quic, picoquic_cnx_t* cnx, void* callback_ctx, picoquic_socket_ctxs_t* s_ctxs,
                       unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_size,
                       struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
     // we don't support segmentation in the server
@@ -141,7 +141,7 @@ ssize_t server_encode(picoquic_quic_t* quic, picoquic_cnx_t* cnx, picoquic_socke
     return packet_len;
 }
 
-ssize_t server_decode(picoquic_quic_t* quic, picoquic_socket_ctx_t* s_ctx, size_t s_ctx_len, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage *peer_addr, struct sockaddr_storage *local_addr) {
+ssize_t server_decode(picoquic_quic_t* quic, void* callback_ctx, picoquic_socket_ctxs_t* s_ctxs, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage *peer_addr, struct sockaddr_storage *local_addr) {
     *dest_buf = NULL;
 
     slot_t* slot;
@@ -149,7 +149,7 @@ ssize_t server_decode(picoquic_quic_t* quic, picoquic_socket_ctx_t* s_ctx, size_
         slot = slipstream_server_dns_request_buffer.tail;
         assert(slot != NULL);
         assert(slot->cnxid_buffer != NULL);
-        respond_and_free_slot(slot, s_ctx, s_ctx_len, RCODE_NAME_ERROR);
+        respond_and_free_slot(slot, s_ctxs, RCODE_NAME_ERROR);
     }
 
     slot = slipstream_dns_request_buffer_get_write_slot(&slipstream_server_dns_request_buffer);
@@ -173,30 +173,31 @@ ssize_t server_decode(picoquic_quic_t* quic, picoquic_socket_ctx_t* s_ctx, size_
     const dns_rcode_t rc = dns_decode(packet, &packet_len, (const dns_packet_t*) src_buf, src_buf_len);
     if (rc != RCODE_OKAY) {
         DBG_PRINTF("dns_decode() = (%d) %s", rc, dns_rcode_text(rc));
-        return respond_and_free_slot(slot, s_ctx, s_ctx_len, RCODE_SERVER_FAILURE);
+        return respond_and_free_slot(slot, s_ctxs, RCODE_SERVER_FAILURE);
     }
 
     const dns_query_t *query = (dns_query_t*) packet;
     if (!query->query) {
         DBG_PRINTF("dns record is not a query", NULL);
-        return respond_and_free_slot(slot, s_ctx, s_ctx_len, RCODE_REFUSED);
+        return respond_and_free_slot(slot, s_ctxs, RCODE_REFUSED);
     }
 
     if (query->qdcount != 1) {
         DBG_PRINTF("dns record should contain exactly one query", NULL);
-        return respond_and_free_slot(slot, s_ctx, s_ctx_len, RCODE_REFUSED);
+        return respond_and_free_slot(slot, s_ctxs, RCODE_REFUSED);
     }
 
     const dns_question_t *question = &query->questions[0];
     if (question->type != RR_TXT) {
-        DBG_PRINTF("query type is not TXT", NULL);
-        return respond_and_free_slot(slot, s_ctx, s_ctx_len, RCODE_REFUSED);
+        // resolvers send anything for pinging, so we only respond to TXT queries
+        // DBG_PRINTF("query type is not TXT", NULL);
+        return respond_and_free_slot(slot, s_ctxs, RCODE_REFUSED);
     }
 
     const ssize_t data_len = strlen(question->name) - server_domain_name_len - 1 - 1;
     if (data_len <= 0) {
         DBG_PRINTF("subdomain is empty", NULL);
-        return respond_and_free_slot(slot, s_ctx, s_ctx_len, RCODE_REFUSED);
+        return respond_and_free_slot(slot, s_ctxs, RCODE_REFUSED);
     }
 
     // copy the subdomain from name to a new buffer
@@ -210,7 +211,7 @@ ssize_t server_decode(picoquic_quic_t* quic, picoquic_socket_ctx_t* s_ctx, size_
     if (decoded_len == (size_t) -1) {
         free(decoded_buf);
         DBG_PRINTF("error decoding base32: %lu", decoded_len);
-        return respond_and_free_slot(slot, s_ctx, s_ctx_len, RCODE_SERVER_FAILURE);
+        return respond_and_free_slot(slot, s_ctxs, RCODE_SERVER_FAILURE);
     }
 
     picoquic_connection_id_t incoming_src_connection_id = {0};
@@ -222,7 +223,7 @@ ssize_t server_decode(picoquic_quic_t* quic, picoquic_socket_ctx_t* s_ctx, size_
     if (ret != 0) {
         free(decoded_buf);
         DBG_PRINTF("error parsing slipstream packet: %d", ret);
-        return respond_and_free_slot(slot, s_ctx, s_ctx_len, RCODE_SERVER_FAILURE);
+        return respond_and_free_slot(slot, s_ctxs, RCODE_SERVER_FAILURE);
     }
 
     picoquic_cnx_t *cnx = picoquic_cnx_by_id_(quic, incoming_dest_connection_id);
@@ -238,7 +239,7 @@ ssize_t server_decode(picoquic_quic_t* quic, picoquic_socket_ctx_t* s_ctx, size_
     if (cnxid_buffer == NULL) {
         free(decoded_buf);
         DBG_PRINTF("error getting or creating cnxid buffer", NULL);
-        return respond_and_free_slot(slot, s_ctx, s_ctx_len, RCODE_SERVER_FAILURE);
+        return respond_and_free_slot(slot, s_ctxs, RCODE_SERVER_FAILURE);
     }
 
     slot->query_id = query->id;
@@ -330,6 +331,14 @@ static void slipstream_server_free_context(slipstream_server_ctx_t* server_ctx) 
         slipstream_server_free_stream_context(server_ctx, stream_ctx);
     }
 
+    if (server_ctx->prev_ctx) {
+        server_ctx->prev_ctx->next_ctx = server_ctx->next_ctx;
+    }
+
+    if (server_ctx->next_ctx) {
+        server_ctx->next_ctx->prev_ctx = server_ctx->prev_ctx;
+    }
+
     /* release the memory */
     free(server_ctx);
 }
@@ -349,7 +358,7 @@ void slipstream_server_mark_active_pass(slipstream_server_ctx_t* server_ctx) {
 
 int slipstream_server_sockloop_callback(picoquic_quic_t* quic, picoquic_packet_loop_cb_enum cb_mode,
                                    void* callback_ctx, void* callback_arg) {
-    slipstream_server_ctx_t* server_ctx = callback_ctx;
+    slipstream_server_ctx_t* default_ctx = callback_ctx;
 
     switch (cb_mode) {
     case picoquic_packet_loop_after_select:
@@ -362,14 +371,12 @@ int slipstream_server_sockloop_callback(picoquic_quic_t* quic, picoquic_packet_l
             slot_t* slot = cnxid_buffer->tail;
             while (slot != NULL) {
                 const uint64_t age = current_time - slot->created_time;
-                if (age < 10000) {
-                    DBG_PRINTF("[%d][age:%d] found young slot", slot->query_id, age);
+                if (age < 100000) {
                     break;
                 }
 
                 // attempt to reply before resolver retries
-                DBG_PRINTF("[%d][age:%d] freeing old slot", slot->query_id, age);
-                respond_and_free_slot(slot, s_ctxs->s_ctx, s_ctxs->len, RCODE_NAME_ERROR);
+                respond_and_free_slot(slot, s_ctxs, RCODE_NAME_ERROR);
                 slot = slot->cnxid_buffer_prev;
             }
         }
@@ -379,10 +386,11 @@ int slipstream_server_sockloop_callback(picoquic_quic_t* quic, picoquic_packet_l
             return 0;
         }
 
-        while (server_ctx->next_ctx != NULL) {
-            /* skip default ctx */
-            server_ctx = server_ctx->next_ctx;
+        /* skip default ctx */
+        slipstream_server_ctx_t* server_ctx = default_ctx->next_ctx;
+        while (server_ctx != NULL) {
             slipstream_server_mark_active_pass(server_ctx);
+            server_ctx = server_ctx->next_ctx;
         }
 
         break;
@@ -705,7 +713,7 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     param.is_client = 0;
     param.decode = server_decode;
     param.encode = server_encode;
-    // param.delay_max = 1;
+    param.delay_max = 5000;
 
     picoquic_network_thread_ctx_t thread_ctx = {0};
     thread_ctx.quic = quic;

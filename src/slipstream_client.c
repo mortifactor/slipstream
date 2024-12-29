@@ -321,17 +321,18 @@ int slipstream_client_sockloop_callback(picoquic_quic_t* quic, picoquic_packet_l
 
     switch (cb_mode) {
     case picoquic_packet_loop_before_select:
-        picoquic_cnx_t* cnx = client_ctx->cnx;
-        picoquic_path_t* path_x = cnx->path[0];
-        picoquic_connection_id_t outgoing_dest_connection_id = path_x->p_remote_cnxid->cnx_id;
-        if (outgoing_dest_connection_id.id_len == 0) {
-            outgoing_dest_connection_id = cnx->initial_cnxid;
-        }
-
         uint64_t current_time = picoquic_current_time();
         uint64_t passed = current_time - client_ctx->last_request;
         if (passed < 20000) {
             break;
+        }
+
+        const picoquic_cnx_t* cnx = client_ctx->cnx;
+        const int path_index = rand() % cnx->nb_paths;
+        const picoquic_path_t* path_x = cnx->path[path_index];
+        picoquic_connection_id_t outgoing_dest_connection_id = path_x->p_remote_cnxid->cnx_id;
+        if (outgoing_dest_connection_id.id_len == 0) {
+            outgoing_dest_connection_id = cnx->initial_cnxid;
         }
 
 

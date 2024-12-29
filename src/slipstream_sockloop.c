@@ -56,7 +56,7 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
     picoquic_packet_loop_param_t* param = thread_ctx->param;
     const picoquic_packet_loop_cb_fn loop_callback = thread_ctx->loop_callback;
     void* loop_callback_ctx = thread_ctx->loop_callback_ctx;
-    slot_t slots[PICOQUIC_PACKET_LOOP_RECV_MAX];
+    slot_t slots[PICOQUIC_PACKET_LOOP_RECV_MAX] = {0};
 
     while (!thread_ctx->thread_should_close) {
         if (loop_callback) {

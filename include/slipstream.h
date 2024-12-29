@@ -19,7 +19,6 @@ extern "C" {
 #define SLIPSTREAM_QLOG_DIR "./qlog";
 
 
-
 int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_filename, const char* domain_name,
                                const char* cc_algo_id);
 

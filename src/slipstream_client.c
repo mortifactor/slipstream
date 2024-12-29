@@ -11,6 +11,7 @@
 #include <assert.h>
 #include <picoquic_internal.h>
 #include <pthread.h>
+#include <slipstream_sockloop.h>
 #include <stdbool.h>
 #include <arpa/nameser.h>
 #include <sys/ioctl.h>
@@ -88,7 +89,7 @@ ssize_t client_encode_segment(picoquic_quic_t* quic, dns_packet_t* packet, size_
     return 0;
 }
 
-ssize_t client_encode(picoquic_quic_t* quic, picoquic_cnx_t* cnx, void* callback_ctx, picoquic_socket_ctxs_t* s_ctxs, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
+ssize_t client_encode(picoquic_quic_t* quic, void* slot_p, void* callback_ctx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
     assert(callback_ctx);
     slipstream_client_ctx_t* client_ctx = callback_ctx;
 
@@ -146,7 +147,7 @@ ssize_t client_encode(picoquic_quic_t* quic, picoquic_cnx_t* cnx, void* callback
     return current_packet - packets;
 }
 
-ssize_t client_decode(picoquic_quic_t* quic, void* callback_ctx, picoquic_socket_ctxs_t* s_ctxs, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
+ssize_t client_decode(picoquic_quic_t* quic, void* slot_p, void* callback_ctx, picoquic_socket_ctx_t* s_ctx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
     *dest_buf = NULL;
     slipstream_client_ctx_t* client_ctx = callback_ctx;
 
@@ -176,7 +177,7 @@ ssize_t client_decode(picoquic_quic_t* quic, void* callback_ctx, picoquic_socket
     }
 
     if (query->ancount != 1) {
-        DBG_PRINTF("[%d] dns record should contain exactly one answer", query->id);
+        // DBG_PRINTF("[%d] dns record should contain exactly one answer", query->id);
         return 0;
     }
 
@@ -200,11 +201,6 @@ ssize_t client_decode(picoquic_quic_t* quic, void* callback_ctx, picoquic_socket
         return answer_txt->len;
     }
 
-    const SOCKET_TYPE send_socket = picoquic_socket_get_send_socket(s_ctxs, peer_addr, local_addr);
-    if (send_socket == INVALID_SOCKET) {
-        DBG_PRINTF("[%d] no valid socket found for poll packet", query->id);
-        return answer_txt->len;
-    }
 
     // get active destination connection id on this ctx
     picoquic_cnx_t* cnx = picoquic_cnx_by_id_(quic, incoming_dest_connection_id);
@@ -225,14 +221,14 @@ ssize_t client_decode(picoquic_quic_t* quic, void* callback_ctx, picoquic_socket
         }
 
         unsigned char* encoded;
-        ssize_t encoded_len = client_encode(quic, cnx, callback_ctx, s_ctxs, &encoded, poll_packet_buf, poll_packet_len,
-            &poll_packet_len, peer_addr, local_addr);
+        ssize_t encoded_len = client_encode(quic, slot_p, callback_ctx, &encoded, poll_packet_buf, poll_packet_len, &poll_packet_len, peer_addr, local_addr);
         if (encoded_len <= 0) {
             DBG_PRINTF("error encoding poll packet", NULL);
             free(poll_packet_buf);
             return answer_txt->len;
         }
 
+        const SOCKET_TYPE send_socket = s_ctx->fd;
         int sock_err = 0;
         ret = picoquic_sendmsg(send_socket,
             (struct sockaddr*)peer_addr, (struct sockaddr*)local_addr, 0,
@@ -300,6 +296,8 @@ static void slipstream_client_free_context(slipstream_client_ctx_t* client_ctx) 
         slipstream_client_free_stream_ctx(client_ctx, stream_ctx);
     }
 
+    free(client_ctx->server_addresses);
+
     /* release the memory */
     free(client_ctx);
 }
@@ -348,19 +346,16 @@ int slipstream_client_sockloop_callback(picoquic_quic_t* quic, picoquic_packet_l
         struct sockaddr_storage *peer_addr = &cnx->path[0]->peer_addr;
         struct sockaddr_storage *local_addr = &cnx->path[0]->local_addr;
 
-        // DBG_PRINTF("[current:%u][last:%u][passed:%u] POLL!", current_time, client_ctx->last_request, passed);
-
-        picoquic_socket_ctxs_t* s_ctxs = (picoquic_socket_ctxs_t*)callback_arg;
+        picoquic_socket_ctx_t* s_ctx = (picoquic_socket_ctx_t*)callback_arg;
         unsigned char* encoded;
-        ssize_t encoded_len = client_encode(quic, cnx, client_ctx, s_ctxs, &encoded, poll_packet_buf, poll_packet_len,
-            &poll_packet_len, NULL, NULL);
+        ssize_t encoded_len = client_encode(quic, NULL, client_ctx, &encoded, poll_packet_buf, poll_packet_len, &poll_packet_len, NULL, NULL);
         if (encoded_len <= 0) {
             DBG_PRINTF("error encoding poll packet", NULL);
             free(poll_packet_buf);
             return 0;
         }
 
-        const SOCKET_TYPE send_socket = picoquic_socket_get_send_socket(s_ctxs, peer_addr, local_addr);
+        const SOCKET_TYPE send_socket = s_ctx->fd;
 
         int sock_err = 0;
         ret = picoquic_sendmsg(send_socket,
@@ -711,7 +706,7 @@ static int slipstream_connect(struct sockaddr_storage* server_address,
     }
 
     // 400ms
-    picoquic_enable_keep_alive(*cnx, 400000);
+    // picoquic_enable_keep_alive(*cnx, 400000);
 
     /* Document connection in client's context */
     client_ctx->cnx = *cnx;
@@ -871,7 +866,7 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     }
 
     signal(SIGTERM, client_sighandler);
-    picoquic_packet_loop_v3(&thread_ctx);
+    slipstream_packet_loop(&thread_ctx);
     ret = thread_ctx.return_code;
 
     /* And finish. */

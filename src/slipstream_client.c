@@ -323,7 +323,7 @@ int slipstream_client_sockloop_callback(picoquic_quic_t* quic, picoquic_packet_l
     case picoquic_packet_loop_before_select:
         uint64_t current_time = picoquic_current_time();
         uint64_t passed = current_time - client_ctx->last_request;
-        if (passed < 20000) {
+        if (passed < 200000) {
             break;
         }
 

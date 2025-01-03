@@ -22,8 +22,8 @@
 #include "picoquic_config.h"
 #include "slipstream.h"
 #include "slipstream_inline_dots.h"
-#include "slipstream_packet.h"
 #include "slipstream_resolver_addresses.h"
+#include "slipstream_utils.h"
 #include "SPCDNS/src/dns.h"
 #include "SPCDNS/src/mappings.h"
 
@@ -39,15 +39,17 @@ typedef struct st_slipstream_client_ctx_t {
     picoquic_cnx_t* cnx;
     slipstream_client_stream_ctx_t* first_stream;
     picoquic_network_thread_ctx_t* thread_ctx;
-    struct sockaddr_storage* server_addresses;
+    struct st_address_t* server_addresses;
     size_t server_address_count;
     uint64_t last_request;
+    bool ready;
+    bool closed;
 } slipstream_client_ctx_t;
 
 char* client_domain_name = NULL;
 size_t client_domain_name_len = 0;
 
-ssize_t client_encode_segment(picoquic_quic_t* quic, dns_packet_t* packet, size_t* packet_len, const unsigned char* src_buf, size_t src_buf_len) {
+ssize_t client_encode_segment(dns_packet_t* packet, size_t* packet_len, const unsigned char* src_buf, size_t src_buf_len) {
     char name[255];
     const size_t len = b32_encode(&name[0], (const char*) src_buf, src_buf_len, true, false);
     const size_t encoded_len = slipstream_inline_dotify(name, 255, len);
@@ -89,7 +91,7 @@ ssize_t client_encode_segment(picoquic_quic_t* quic, dns_packet_t* packet, size_
     return 0;
 }
 
-ssize_t client_encode(picoquic_quic_t* quic, void* slot_p, void* callback_ctx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
+ssize_t client_encode(void* slot_p, void* callback_ctx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
     assert(callback_ctx);
     slipstream_client_ctx_t* client_ctx = callback_ctx;
 
@@ -97,7 +99,7 @@ ssize_t client_encode(picoquic_quic_t* quic, void* slot_p, void* callback_ctx, u
     if (src_buf_len <= *segment_len) {
         size_t packet_len = MAX_DNS_QUERY_SIZE;
         unsigned char* packet = malloc(packet_len);
-        const ssize_t ret = client_encode_segment(quic, (dns_packet_t*) packet, &packet_len, src_buf, src_buf_len);
+        const ssize_t ret = client_encode_segment((dns_packet_t*) packet, &packet_len, src_buf, src_buf_len);
         if (ret < 0) {
             free(packet);
             return -1;
@@ -119,7 +121,7 @@ ssize_t client_encode(picoquic_quic_t* quic, void* slot_p, void* callback_ctx, u
     size_t first_packet_len = 0;
     for (size_t i = 0; i < num_segments; i++) {
         size_t packet_len = MAX_DNS_QUERY_SIZE;
-        const ssize_t ret = client_encode_segment(quic, (dns_packet_t*) current_packet, &packet_len, segment, *segment_len);
+        const ssize_t ret = client_encode_segment((dns_packet_t*) current_packet, &packet_len, segment, *segment_len);
         if (ret < 0) {
             free(packets);
             return -1;
@@ -147,9 +149,8 @@ ssize_t client_encode(picoquic_quic_t* quic, void* slot_p, void* callback_ctx, u
     return current_packet - packets;
 }
 
-ssize_t client_decode(picoquic_quic_t* quic, void* slot_p, void* callback_ctx, picoquic_socket_ctx_t* s_ctx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
+ssize_t client_decode(void* slot_p, void* callback_ctx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
     *dest_buf = NULL;
-    slipstream_client_ctx_t* client_ctx = callback_ctx;
 
     size_t bufsize = DNS_DECODEBUF_4K * sizeof(dns_decoded_t);
     dns_decoded_t decoded[DNS_DECODEBUF_4K] = {0};
@@ -189,62 +190,6 @@ ssize_t client_decode(picoquic_quic_t* quic, void* slot_p, void* callback_ctx, p
 
     *dest_buf = malloc(answer_txt->len);
     memcpy((void*)*dest_buf, answer_txt->text, answer_txt->len);
-
-
-    picoquic_connection_id_t incoming_src_connection_id = {0};
-    picoquic_connection_id_t incoming_dest_connection_id; // sure to be set by parser
-    bool is_poll_packet = false;
-    int ret = slipstream_packet_parse(*dest_buf, answer_txt->len, PICOQUIC_SHORT_HEADER_CONNECTION_ID_SIZE,
-        &incoming_src_connection_id, &incoming_dest_connection_id, &is_poll_packet);
-    if (ret != 0 || is_poll_packet) {
-        DBG_PRINTF("[%d] error parsing slipstream packet: %d", query->id, ret);
-        return answer_txt->len;
-    }
-
-
-    // get active destination connection id on this ctx
-    picoquic_cnx_t* cnx = picoquic_cnx_by_id_(quic, incoming_dest_connection_id);
-    picoquic_connection_id_t outgoing_dest_connection_id = cnx->path[0]->p_remote_cnxid->cnx_id;
-    if (outgoing_dest_connection_id.id_len == 0) {
-        // p_remote_cnxid is not set yet when we are receiving the first server response
-        outgoing_dest_connection_id = incoming_src_connection_id;
-    }
-
-    const int poll_ratio = 1;
-    for (int j = 0; j < poll_ratio; ++j) {
-        uint8_t* poll_packet_buf;
-        size_t poll_packet_len;
-        ret = slipstream_packet_create_poll(&poll_packet_buf, &poll_packet_len, outgoing_dest_connection_id);
-        if (ret < 0) {
-            DBG_PRINTF("error creating poll packet", NULL);
-            return answer_txt->len;
-        }
-
-        unsigned char* encoded;
-        ssize_t encoded_len = client_encode(quic, slot_p, callback_ctx, &encoded, poll_packet_buf, poll_packet_len, &poll_packet_len, peer_addr, local_addr);
-        if (encoded_len <= 0) {
-            DBG_PRINTF("error encoding poll packet", NULL);
-            free(poll_packet_buf);
-            return answer_txt->len;
-        }
-
-        const SOCKET_TYPE send_socket = s_ctx->fd;
-        int sock_err = 0;
-        ret = picoquic_sendmsg(send_socket,
-            (struct sockaddr*)peer_addr, (struct sockaddr*)local_addr, 0,
-            (const char*)encoded, encoded_len, 0, &sock_err);
-        if (ret < 0) {
-            DBG_PRINTF("Error sending poll packet, ret=%d, sock_err=%d %s", ret, sock_err, strerror(sock_err));
-            free(poll_packet_buf);
-            free(encoded);
-            return answer_txt->len;
-        }
-
-        free(poll_packet_buf);
-        free(encoded);
-    }
-
-    client_ctx->last_request = picoquic_current_time();
 
     return answer_txt->len;
 }
@@ -298,8 +243,7 @@ static void slipstream_client_free_context(slipstream_client_ctx_t* client_ctx) 
 
     free(client_ctx->server_addresses);
 
-    /* release the memory */
-    free(client_ctx);
+    client_ctx->closed = true;
 }
 
 void slipstream_client_mark_active_pass(slipstream_client_ctx_t* client_ctx) {
@@ -315,64 +259,48 @@ void slipstream_client_mark_active_pass(slipstream_client_ctx_t* client_ctx) {
     }
 }
 
+void slipstream_add_paths(slipstream_client_ctx_t* client_ctx) {
+    picoquic_cnx_t* cnx = client_ctx->cnx;
+    // add rest of the resolvers
+    for (size_t i = 1; i < client_ctx->server_address_count; i++) {
+        address_t* slipstream_path = &client_ctx->server_addresses[i];
+        if (slipstream_path->added) {
+            continue;
+        }
+
+        uint64_t current_time = picoquic_current_time();
+        // if (current_time - cnx->start_time < 10000000) {
+        //     DBG_PRINTF("Can't add path yet", NULL);
+        //     continue;
+        // }
+
+        print_sockaddr_ip_and_port(&slipstream_path->server_address);
+        int path_id = -2;
+        picoquic_probe_new_path_ex(cnx, (struct sockaddr*)&slipstream_path->server_address, (struct sockaddr*)&cnx->path[0]->local_addr, 0, current_time, 0, &path_id);
+        if (path_id < 0) {
+            DBG_PRINTF("Failed adding path", NULL);
+            continue;
+        }
+        DBG_PRINTF("Added path", NULL);
+
+        picoquic_reinsert_by_wake_time(cnx->quic, cnx, current_time);
+        slipstream_path->added = true;
+    }
+}
+
 int slipstream_client_sockloop_callback(picoquic_quic_t* quic, picoquic_packet_loop_cb_enum cb_mode,
                                    void* callback_ctx, void* callback_arg) {
     slipstream_client_ctx_t* client_ctx = callback_ctx;
 
+    if (client_ctx->closed) {
+        return 0;
+    }
+
     switch (cb_mode) {
     case picoquic_packet_loop_before_select:
-        uint64_t current_time = picoquic_current_time();
-        uint64_t passed = current_time - client_ctx->last_request;
-        if (passed < 200000) {
-            break;
+        if (client_ctx->ready) {
+            slipstream_add_paths(client_ctx);
         }
-
-        const picoquic_cnx_t* cnx = client_ctx->cnx;
-        const int path_index = rand() % cnx->nb_paths;
-        const picoquic_path_t* path_x = cnx->path[path_index];
-        picoquic_connection_id_t outgoing_dest_connection_id = path_x->p_remote_cnxid->cnx_id;
-        if (outgoing_dest_connection_id.id_len == 0) {
-            outgoing_dest_connection_id = cnx->initial_cnxid;
-        }
-
-
-        uint8_t* poll_packet_buf;
-        size_t poll_packet_len;
-        int ret = slipstream_packet_create_poll(&poll_packet_buf, &poll_packet_len, outgoing_dest_connection_id);
-        if (ret < 0) {
-            DBG_PRINTF("error creating poll packet", NULL);
-            return 0;
-        }
-
-        struct sockaddr_storage *peer_addr = &cnx->path[0]->peer_addr;
-        struct sockaddr_storage *local_addr = &cnx->path[0]->local_addr;
-
-        picoquic_socket_ctx_t* s_ctx = (picoquic_socket_ctx_t*)callback_arg;
-        unsigned char* encoded;
-        ssize_t encoded_len = client_encode(quic, NULL, client_ctx, &encoded, poll_packet_buf, poll_packet_len, &poll_packet_len, NULL, NULL);
-        if (encoded_len <= 0) {
-            DBG_PRINTF("error encoding poll packet", NULL);
-            free(poll_packet_buf);
-            return 0;
-        }
-
-        const SOCKET_TYPE send_socket = s_ctx->fd;
-
-        int sock_err = 0;
-        ret = picoquic_sendmsg(send_socket,
-            (struct sockaddr*)peer_addr, (struct sockaddr*)local_addr, 0,
-            (const char*)encoded, encoded_len, 0, &sock_err);
-        if (ret < 0) {
-            DBG_PRINTF("Error sending poll packet, ret=%d, sock_err=%d %s", ret, sock_err, strerror(sock_err));
-            free(poll_packet_buf);
-            free(encoded);
-            return 0;
-        }
-
-        free(poll_packet_buf);
-        free(encoded);
-
-        client_ctx->last_request = current_time;
     case picoquic_packet_loop_wake_up:
         if (callback_ctx == NULL) {
             return 0;
@@ -640,26 +568,8 @@ int slipstream_client_callback(picoquic_cnx_t* cnx,
         break;
     case picoquic_callback_ready:
         fprintf(stdout, "Connection confirmed.\n");
-
-        // add rest of the resolvers
-        for (size_t i = 1; i < client_ctx->server_address_count; i++) {
-            struct sockaddr* server_address = (struct sockaddr*)&client_ctx->server_addresses[i];
-            uint64_t current_time = picoquic_current_time();
-            // convert server address to string
-            char host[NI_MAXHOST];
-            socklen_t addrlen = sizeof(*server_address);
-            ret = getnameinfo(server_address, addrlen, host, sizeof(host), NULL, 0, NI_NUMERICHOST | NI_NUMERICSERV);
-            if (ret == 0) {
-                printf("Probing path: %s", host);
-            }
-
-            ret = picoquic_probe_new_path(cnx, server_address, NULL, current_time);
-            if (ret != 0) {
-                fprintf(stderr, "Could not create probe new path\n");
-                return -1;
-            }
-        }
-        break;
+        client_ctx->ready = true;
+        slipstream_add_paths(client_ctx);
     default:
         /* unexpected -- just ignore. */
         break;
@@ -707,7 +617,7 @@ static int slipstream_connect(struct sockaddr_storage* server_address,
     }
 
     // 400ms
-    // picoquic_enable_keep_alive(*cnx, 400000);
+    picoquic_enable_keep_alive(*cnx, 400000);
 
     /* Document connection in client's context */
     client_ctx->cnx = *cnx;
@@ -768,10 +678,9 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     /* Create the QUIC context for the server */
     current_time = picoquic_current_time();
     // one connection only, freed in slipstream_client_free_context on picoquic close callback
-    slipstream_client_ctx_t *client_ctx = malloc(sizeof(slipstream_client_ctx_t));
-    memset(client_ctx, 0, sizeof(slipstream_client_ctx_t));
+    slipstream_client_ctx_t client_ctx = {0};
     /* Create QUIC context */
-    picoquic_quic_t* quic = picoquic_create_and_configure(&config, slipstream_client_callback, client_ctx, current_time, NULL);
+    picoquic_quic_t* quic = picoquic_create_and_configure(&config, slipstream_client_callback, &client_ctx, current_time, NULL);
     if (quic == NULL) {
         fprintf(stderr, "Could not create server context\n");
         return -1;
@@ -783,17 +692,19 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     debug_printf_push_stream(stderr);
 #endif
     picoquic_set_key_log_file_from_env(quic);
+    // picoquic_set_textlog(quic, "-");
+    // picoquic_set_log_level(quic, 1);
     // TODO: idle timeout?
 
     /* Read the server address list from the file */
-    client_ctx->server_addresses = read_resolver_addresses(resolver_addresses_filename, &client_ctx->server_address_count);
-    if (!client_ctx->server_addresses) {
+    client_ctx.server_addresses = read_resolver_addresses(resolver_addresses_filename, &client_ctx.server_address_count);
+    if (!client_ctx.server_addresses) {
         printf("Failed to read IP addresses\n");
         return 1;
     }
 
     picoquic_cnx_t* cnx = NULL;
-    ret = slipstream_connect(client_ctx->server_addresses, quic, &cnx, client_ctx);
+    ret = slipstream_connect(&client_ctx.server_addresses[0].server_address, quic, &cnx, &client_ctx);
     if (ret != 0) {
         fprintf(stderr, "Could not connect to server\n");
         return -1;
@@ -847,17 +758,17 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     thread_ctx.quic = quic;
     thread_ctx.param = &param;
     thread_ctx.loop_callback = slipstream_client_sockloop_callback;
-    thread_ctx.loop_callback_ctx = client_ctx;
+    thread_ctx.loop_callback_ctx = &client_ctx;
 
     /* Open the wake up pipe or event */
     picoquic_open_network_wake_up(&thread_ctx, &ret);
 
-    client_ctx->thread_ctx = &thread_ctx;
+    client_ctx.thread_ctx = &thread_ctx;
 
     slipstream_client_accepter_args* args = malloc(sizeof(slipstream_client_accepter_args));
     args->fd = listen_sock;
     args->cnx = cnx;
-    args->client_ctx = client_ctx;
+    args->client_ctx = &client_ctx;
     args->thread_ctx = &thread_ctx;
 
     pthread_t thread;
@@ -867,6 +778,7 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     }
 
     signal(SIGTERM, client_sighandler);
+    // picoquic_packet_loop_v3(&thread_ctx);
     slipstream_packet_loop(&thread_ctx);
     ret = thread_ctx.return_code;
 

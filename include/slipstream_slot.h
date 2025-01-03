@@ -11,7 +11,7 @@ typedef struct st_slot_t {
     struct sockaddr_storage local_addr;
     picoquic_cnx_t* cnx;
     uint64_t created_time;
-    int query_id;
+    bool is_poll_packet;
 } slot_t;
 
 #endif // SLIPSTREAM_SLOT

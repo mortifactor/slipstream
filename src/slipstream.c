@@ -30,6 +30,9 @@ int main(int argc, char** argv)
     (void)WSA_START(MAKEWORD(2, 2), &wsaData);
 #endif
 
+
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
     if (argc < 2) {
         usage(argv[0]);
     }
@@ -46,15 +49,14 @@ int main(int argc, char** argv)
         }
     }
     else if (strcmp(argv[1], "server") == 0) {
-        if (argc != 9) {
+        if (argc != 8) {
             usage(argv[0]);
         }
         else {
             int server_port = get_port(argv[0], argv[2]);
             int remote_port = get_port(argv[0], argv[6]);
             const char* domain_name = argv[7];
-            const char* cc_algo_id = argv[8];
-            exit_code = picoquic_slipstream_server(server_port, argv[3], argv[4], argv[5], remote_port, domain_name, cc_algo_id);
+            exit_code = picoquic_slipstream_server(server_port, argv[3], argv[4], argv[5], remote_port, domain_name);
         }
     }
     else

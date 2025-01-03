@@ -10,7 +10,7 @@
 #define MAX_LINE_LENGTH 50
 #define DEFAULT_PORT 53
 
-struct sockaddr_storage* read_resolver_addresses(const char *resolver_addresses_filename, size_t *count) {
+struct st_address_t* read_resolver_addresses(const char *resolver_addresses_filename, size_t *count) {
     *count = 0;
 
     FILE *fp = fopen(resolver_addresses_filename, "r");
@@ -19,7 +19,7 @@ struct sockaddr_storage* read_resolver_addresses(const char *resolver_addresses_
     }
 
     int capacity = INITIAL_CAPACITY;
-    struct sockaddr_storage* server_address = calloc(capacity, sizeof(struct sockaddr_storage));
+    struct st_address_t* server_address = calloc(capacity, sizeof(struct st_address_t));
     if (!server_address) {
         fclose(fp);
         return NULL;
@@ -40,7 +40,7 @@ struct sockaddr_storage* read_resolver_addresses(const char *resolver_addresses_
         // Resize array if needed
         if (valid_addresses == capacity) {
             capacity *= 2;
-            struct sockaddr_storage* temp = realloc(server_address, capacity * sizeof(struct sockaddr_storage));
+            struct st_address_t* temp = realloc(server_address, capacity * sizeof(struct st_address_t));
             if (!temp) {
                 fprintf(stderr, "Memory allocation failed\n");
                 free(server_address);
@@ -61,7 +61,7 @@ struct sockaddr_storage* read_resolver_addresses(const char *resolver_addresses_
         printf("Adding %s:%d\n", server_name, server_port);
 
         int is_name = 0;
-        if (picoquic_get_server_address(server_name, server_port, &server_address[valid_addresses], &is_name) != 0) {
+        if (picoquic_get_server_address(server_name, server_port, &server_address[valid_addresses].server_address, &is_name) != 0) {
             fprintf(stderr, "Cannot get the IP address for <%s> port <%d>\n", server_name, server_port);
             continue;  // Skip invalid addresses instead of failing
         }
@@ -73,7 +73,7 @@ struct sockaddr_storage* read_resolver_addresses(const char *resolver_addresses_
 
     // Trim excess memory if needed
     if (valid_addresses < capacity) {
-        struct sockaddr_storage* temp = realloc(server_address, valid_addresses * sizeof(struct sockaddr_storage));
+        struct st_address_t* temp = realloc(server_address, valid_addresses * sizeof(struct st_address_t));
         if (temp) {
             server_address = temp;
         }

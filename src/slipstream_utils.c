@@ -1,8 +1,11 @@
 #include "slipstream_utils.h"
 
+#include <picoquic_internal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "picoquic_utils.h"
 
 
 char* picoquic_connection_id_to_string(const picoquic_connection_id_t* cid) {
@@ -41,4 +44,24 @@ void sockaddr_dummy(struct sockaddr_storage *addr_storage) {
 #ifdef __APPLE__ // For BSD systems, set sin_len
     addr4->sin_len = sizeof(struct sockaddr_in);
 #endif
+}
+
+void print_sockaddr_ip_and_port(struct sockaddr_storage *addr_storage) {
+    char ip_str[INET6_ADDRSTRLEN];
+    int port;
+
+    if (addr_storage->ss_family == AF_INET) {
+        struct sockaddr_in *addr4 = (struct sockaddr_in *)addr_storage;
+        inet_ntop(AF_INET, &addr4->sin_addr, ip_str, INET6_ADDRSTRLEN);
+        port = ntohs(addr4->sin_port);
+    } else if (addr_storage->ss_family == AF_INET6) {
+        struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)addr_storage;
+        inet_ntop(AF_INET6, &addr6->sin6_addr, ip_str, INET6_ADDRSTRLEN);
+        port = ntohs(addr6->sin6_port);
+    } else {
+        DBG_PRINTF("Unknown address family", NULL);
+        return;
+    }
+
+    DBG_PRINTF("%s:%d", ip_str, port);
 }

@@ -13,13 +13,15 @@
 #include <sys/param.h>
 #include <sys/poll.h>
 #include <assert.h>
+#include <picoquic_internal.h>
 #include <slipstream_sockloop.h>
 
 #include "lua-resty-base-encoding-base32.h"
 #include "picoquic_config.h"
+#include "picoquic_logger.h"
 #include "slipstream.h"
 #include "slipstream_inline_dots.h"
-#include "slipstream_packet.h"
+#include "../include/slipstream_server_cc.h"
 #include "slipstream_slot.h"
 #include "slipstream_utils.h"
 #include "SPCDNS/src/dns.h"
@@ -28,7 +30,7 @@
 char* server_domain_name = NULL;
 size_t server_domain_name_len = 0;
 
-ssize_t server_encode(picoquic_quic_t* quic, void* slot_p, void* callback_ctx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
+ssize_t server_encode(void* slot_p, void* callback_ctx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
     // we don't support segmentation in the server
     assert(segment_len == NULL || *segment_len == 0 || *segment_len == src_buf_len);
 
@@ -89,7 +91,7 @@ ssize_t server_encode(picoquic_quic_t* quic, void* slot_p, void* callback_ctx, u
     return packet_len;
 }
 
-ssize_t server_decode(picoquic_quic_t* quic, void* slot_p, void* callback_ctx, picoquic_socket_ctx_t* s_ctx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage *peer_addr, struct sockaddr_storage *local_addr) {
+ssize_t server_decode(void* slot_p, void* callback_ctx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage *peer_addr, struct sockaddr_storage *local_addr) {
     *dest_buf = NULL;
 
     slot_t* slot = slot_p;
@@ -152,28 +154,6 @@ ssize_t server_decode(picoquic_quic_t* quic, void* slot_p, void* callback_ctx, p
         free(decoded_buf);
         DBG_PRINTF("error decoding base32: %lu", decoded_len);
         slot->error = RCODE_SERVER_FAILURE;
-        return 0;
-    }
-
-    picoquic_connection_id_t incoming_src_connection_id = {0};
-    picoquic_connection_id_t incoming_dest_connection_id; // sure to be set by parser
-    bool is_poll_packet = false;
-    // ReSharper disable once CppDFAUnreachableCode
-    const int ret = slipstream_packet_parse(decoded_buf, decoded_len, PICOQUIC_SHORT_HEADER_CONNECTION_ID_SIZE,
-        &incoming_src_connection_id, &incoming_dest_connection_id, &is_poll_packet);
-    if (ret != 0) {
-        free(decoded_buf);
-        DBG_PRINTF("error parsing slipstream packet: %d", ret);
-        slot->error = RCODE_SERVER_FAILURE;
-        return 0;
-    }
-
-    picoquic_cnx_t *cnx = picoquic_cnx_by_id_(quic, incoming_dest_connection_id);
-    slot->cnx = cnx;
-    slot->query_id = query->id;
-
-    if (is_poll_packet) {
-        free(decoded_buf);
         return 0;
     }
 
@@ -556,7 +536,7 @@ void server_sighandler(int signum) {
 }
 
 int picoquic_slipstream_server(int server_port, const char* server_cert, const char* server_key,
-                               char const* upstream_name, int upstream_port, const char* domain_name, const char* cc_algo_id) {
+                               char const* upstream_name, int upstream_port, const char* domain_name) {
     /* Start: start the QUIC process with cert and key files */
     int ret = 0;
     uint64_t current_time = 0;
@@ -586,7 +566,6 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     config.mtu_max = mtu;
     config.initial_send_mtu_ipv4 = mtu;
     config.initial_send_mtu_ipv6 = mtu;
-    config.cc_algo_id = cc_algo_id;
     config.multipath_option = 1;
     config.use_long_log = 1;
     config.do_preemptive_repeat = 1;
@@ -610,6 +589,10 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     debug_printf_push_stream(stderr);
 #endif
     picoquic_set_key_log_file_from_env(quic);
+    // picoquic_set_textlog(quic, "-");
+    // picoquic_set_log_level(quic, 1);
+
+    picoquic_set_default_congestion_algorithm(quic, slipstream_server_cc_algorithm);
 
     picoquic_packet_loop_param_t param = {0};
     param.local_af = AF_INET;
@@ -632,6 +615,7 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     default_context.thread_ctx = &thread_ctx;
 
     signal(SIGTERM, server_sighandler);
+    // picoquic_packet_loop_v3(&thread_ctx);
     slipstream_packet_loop(&thread_ctx);
     ret = thread_ctx.return_code;
 

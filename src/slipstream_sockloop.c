@@ -137,12 +137,6 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
             }
             slot->cnx = last_cnx;
             nb_packet_received++;
-
-            if (!param->is_client && last_cnx->nb_paths == 1) {
-                // server can only have 1 incoming path
-                picoquic_path_t* path_x = last_cnx->path[0];
-                picoquic_set_ack_needed(last_cnx, current_time, picoquic_packet_context_application, path_x, 1);
-            }
         }
 
         const uint64_t loop_time = picoquic_current_time();

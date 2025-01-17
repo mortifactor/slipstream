@@ -168,6 +168,8 @@ typedef struct st_slipstream_server_stream_ctx_t {
     int fd;
     uint64_t stream_id;
     volatile sig_atomic_t set_active;
+    int syn_received;
+    int syn_sent;
 } slipstream_server_stream_ctx_t;
 
 typedef struct st_slipstream_server_ctx_t {
@@ -188,6 +190,7 @@ slipstream_server_stream_ctx_t* slipstream_server_create_stream_ctx(slipstream_s
         return NULL;
     }
 
+    memset(stream_ctx, 0, sizeof(slipstream_server_stream_ctx_t));
     int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (sock_fd < 0) {
         perror("socket() failed");
@@ -386,6 +389,17 @@ int slipstream_server_callback(picoquic_cnx_t* cnx,
             printf("[%lu:%d] marked active\n", stream_id, stream_ctx->fd);
         }
 
+        // skip syn
+        if (length > 0 && !stream_ctx->syn_received) {
+            DBG_PRINTF("[stream_id=%d] recv syn", stream_ctx->stream_id);
+            length--;
+            bytes++;
+            stream_ctx->syn_received = 1;
+            picoquic_mark_active_stream(cnx, stream_id, 1, stream_ctx);
+            picoquic_set_stream_priority(cnx, stream_id, 0);
+            DBG_PRINTF("[stream_id=%d][leftover_length=%d]", stream_ctx->stream_id, length);
+        }
+
         // printf("[%lu:%d] quic_recv->send %lu bytes\n", stream_id, stream_ctx->fd, length);
         if (length > 0) {
             ssize_t bytes_sent = send(stream_ctx->fd, bytes, length, MSG_NOSIGNAL);
@@ -447,6 +461,20 @@ int slipstream_server_callback(picoquic_cnx_t* cnx,
             /* This should never happen */
         }
         else {
+            if (stream_ctx->syn_received && !stream_ctx->syn_sent) {
+                DBG_PRINTF("[stream_id=%d] send syn", stream_ctx->stream_id);
+                uint8_t* buffer = picoquic_provide_stream_data_buffer(bytes, 1, 0, 1);
+                if (buffer == NULL) {
+                    /* Should never happen according to callback spec. */
+                    break;
+                }
+                buffer[0] = 0;
+                stream_ctx->syn_sent = 1;
+                picoquic_set_stream_priority(cnx, stream_id, cnx->quic->default_stream_priority);
+                break;
+            }
+            // allow to send on stream even if we haven't syn_received
+
             int length_available;
             ret = ioctl(stream_ctx->fd, FIONREAD, &length_available);
             // printf("[%lu:%d] recv->quic_send (available %d)\n", stream_id, stream_ctx->fd, length_available);
@@ -584,6 +612,7 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     }
 
     picoquic_set_cookie_mode(quic, 2);
+    picoquic_set_default_priority(quic, 2);
 #ifdef BUILD_LOGLIB
     picoquic_set_qlog(quic, config.qlog_dir);
     debug_printf_push_stream(stderr);

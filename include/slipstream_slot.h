@@ -12,6 +12,7 @@ typedef struct st_slot_t {
     picoquic_cnx_t* cnx;
     uint64_t created_time;
     bool is_poll_packet;
+    bool responded;
 } slot_t;
 
 #endif // SLIPSTREAM_SLOT

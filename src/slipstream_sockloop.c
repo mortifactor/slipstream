@@ -57,7 +57,6 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
     const picoquic_packet_loop_cb_fn loop_callback = thread_ctx->loop_callback;
     void* loop_callback_ctx = thread_ctx->loop_callback_ctx;
     slot_t slots[PICOQUIC_PACKET_LOOP_RECV_MAX] = {0};
-    slot_t send_slot = {0};
 
     while (!thread_ctx->thread_should_close) {
         if (loop_callback) {
@@ -145,13 +144,7 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
         const size_t max_slots = param->is_client ? PICOQUIC_PACKET_LOOP_SEND_MAX : nb_slots_written;
         while (nb_slots_read < max_slots) {
             uint8_t send_buffer[send_buffer_size];
-            slot_t* slot;
-            if (param->is_client) {
-                memset(&send_slot, 0, sizeof(slot_t));
-                slot = &send_slot;
-            } else {
-                slot = &slots[nb_slots_read];
-            }
+            slot_t* slot = &slots[nb_slots_read];
             assert(slot != NULL);
             nb_slots_read++;
 
@@ -218,6 +211,7 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
                 return bytes_sent;
             }
 
+            slot->responded = 1;
             nb_packets_sent++;
         }
 
@@ -234,6 +228,9 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
             nb_slots_read++;
             if (slot->cnx == NULL) {
                 continue; // in case the slot written was a bogus message
+            }
+            if (slot->responded) {
+                continue; // already responded
             }
 
             slot->cnx->is_poll_requested = 1;

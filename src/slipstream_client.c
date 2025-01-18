@@ -501,6 +501,19 @@ int slipstream_client_callback(picoquic_cnx_t* cnx,
 
             slipstream_client_free_stream_ctx(client_ctx, stream_ctx);
             picoquic_reset_stream(cnx, stream_id, SLIPSTREAM_FILE_CANCEL_ERROR);
+
+            // allow accepting next connection
+            slipstream_client_accepter_args* args = malloc(sizeof(slipstream_client_accepter_args));
+            args->fd = client_ctx->listen_sock;
+            args->cnx = cnx;
+            args->client_ctx = client_ctx;
+            args->thread_ctx = client_ctx->thread_ctx;
+
+            pthread_t thread;
+            if (pthread_create(&thread, NULL, slipstream_client_accepter, args) != 0) {
+                perror("pthread_create() failed for thread");
+                free(args);
+            }
         }
         break;
     case picoquic_callback_stateless_reset:

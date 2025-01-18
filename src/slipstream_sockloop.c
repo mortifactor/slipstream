@@ -136,6 +136,10 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
             }
             slot->cnx = last_cnx;
             nb_packet_received++;
+
+            if (!param->is_client) {
+                last_cnx->no_ack_delay = 1;
+            }
         }
 
         const uint64_t loop_time = picoquic_current_time();
@@ -289,9 +293,9 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
             nb_polls_sent++;
         }
 
-        if (param->is_client) {
-            DBG_PRINTF("[polls_sent:%d][sent:%d][received:%d]", nb_polls_sent, nb_packets_sent, nb_packet_received);
-        }
+        // if (param->is_client) {
+        //     DBG_PRINTF("[polls_sent:%d][sent:%d][received:%d]", nb_polls_sent, nb_packets_sent, nb_packet_received);
+        // }
     }
 
     return thread_ctx->return_code;

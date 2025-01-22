@@ -123,6 +123,7 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
             slot_t* slot = &slots[nb_slots_written];
             assert(slot != NULL);
             memset(slot, 0, sizeof(slot_t));
+            slot->path_id = -1;
             nb_slots_written++;
 
             unsigned char* decoded;
@@ -144,14 +145,16 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
             uint8_t* received_buffer = buffer;
             uint64_t current_time = picoquic_current_time();
             picoquic_cnx_t* last_cnx = NULL;
+            int last_path_id = -1;
             int ret = picoquic_incoming_packet_ex(quic, received_buffer,
                 (size_t)bytes_recv, (struct sockaddr*)&peer_addr,
                 (struct sockaddr*)&local_addr, if_index_to, received_ecn,
-                &last_cnx, current_time);
+                &last_cnx, &last_path_id, current_time);
             if (ret < 0) {
                 return ret;
             }
             slot->cnx = last_cnx;
+            slot->path_id = last_path_id;
             nb_packet_received++;
 
             if (!param->is_client) {
@@ -177,7 +180,7 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
                 picoquic_connection_id_t log_cid;
                 int ret;
                 if (!param->is_client && slot->cnx) {
-                    ret = picoquic_prepare_packet_ex(slot->cnx, loop_time,
+                    ret = picoquic_prepare_packet_ex(slot->cnx, slot->path_id, loop_time,
                         send_buffer, send_buffer_size, &send_length,
                         &peer_addr, &local_addr, &if_index, send_msg_ptr);
                 }
@@ -256,7 +259,7 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
             struct sockaddr_storage peer_addr = {0};
             struct sockaddr_storage local_addr = {0};
             int if_index = param->dest_if;
-            int ret = picoquic_prepare_packet_ex(slot->cnx, loop_time,
+            int ret = picoquic_prepare_packet_ex(slot->cnx, -1, loop_time,
                 send_buffer, send_buffer_size, &send_length,
                 &peer_addr, &local_addr, &if_index, send_msg_ptr);
             if (ret < 0) {

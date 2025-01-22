@@ -10,8 +10,8 @@ typedef struct st_slot_t {
     struct sockaddr_storage peer_addr;
     struct sockaddr_storage local_addr;
     picoquic_cnx_t* cnx;
+    int path_id;
     bool is_poll_packet;
-    bool responded;
 } slot_t;
 
 #endif // SLIPSTREAM_SLOT

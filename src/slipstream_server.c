@@ -35,6 +35,17 @@ ssize_t server_encode(void* slot_p, void* callback_ctx, unsigned char** dest_buf
     assert(segment_len == NULL || *segment_len == 0 || *segment_len == src_buf_len);
 
     slot_t* slot = (slot_t*) slot_p;
+
+#ifdef NOENCODE
+    *dest_buf = malloc(src_buf_len);
+    memcpy((void*)*dest_buf, src_buf, src_buf_len);
+
+    memcpy(peer_addr, &slot->peer_addr, sizeof(struct sockaddr_storage));
+    memcpy(local_addr, &slot->local_addr, sizeof(struct sockaddr_storage));
+
+    return src_buf_len;
+#endif
+
     dns_query_t *query = (dns_query_t *) slot->dns_decoded;
     dns_txt_t answer_txt; // TODO: fix
     dns_answer_t edns = {0};
@@ -95,7 +106,6 @@ ssize_t server_decode(void* slot_p, void* callback_ctx, unsigned char** dest_buf
     *dest_buf = NULL;
 
     slot_t* slot = slot_p;
-    slot->created_time = picoquic_current_time();
 
     // DNS packets arrive from random source ports, so:
     // * save the original address in the dns query slot
@@ -104,6 +114,13 @@ ssize_t server_decode(void* slot_p, void* callback_ctx, unsigned char** dest_buf
     sockaddr_dummy(peer_addr);
     // Save local address for right response local addr
     memcpy(&slot->local_addr, local_addr, sizeof(struct sockaddr_storage));
+
+#ifdef NODECODE
+    *dest_buf = malloc(src_buf_len);
+    memcpy((void*)*dest_buf, src_buf, src_buf_len);
+
+    return src_buf_len;
+#endif
 
     size_t packet_len = DNS_DECODEBUF_4K * sizeof(dns_decoded_t);
     dns_decoded_t* packet = slot->dns_decoded;

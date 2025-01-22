@@ -10,7 +10,6 @@ typedef struct st_slot_t {
     struct sockaddr_storage peer_addr;
     struct sockaddr_storage local_addr;
     picoquic_cnx_t* cnx;
-    uint64_t created_time;
     bool is_poll_packet;
     bool responded;
 } slot_t;

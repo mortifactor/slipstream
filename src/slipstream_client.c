@@ -43,7 +43,6 @@ typedef struct st_slipstream_client_ctx_t {
     picoquic_network_thread_ctx_t* thread_ctx;
     struct st_address_t* server_addresses;
     size_t server_address_count;
-    uint64_t last_request;
     bool ready;
     bool closed;
     int listen_sock;
@@ -95,11 +94,14 @@ ssize_t client_encode_segment(dns_packet_t* packet, size_t* packet_len, const un
 }
 
 ssize_t client_encode(void* slot_p, void* callback_ctx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
-    assert(callback_ctx);
-    slipstream_client_ctx_t* client_ctx = callback_ctx;
-
     // optimize path for single segment
     if (src_buf_len <= *segment_len) {
+#ifdef NOENCODE
+        *dest_buf = malloc(src_buf_len);
+        memcpy((void*)*dest_buf, src_buf, src_buf_len);
+
+        return src_buf_len;
+#endif
         size_t packet_len = MAX_DNS_QUERY_SIZE;
         unsigned char* packet = malloc(packet_len);
         const ssize_t ret = client_encode_segment((dns_packet_t*) packet, &packet_len, src_buf, src_buf_len);
@@ -111,10 +113,12 @@ ssize_t client_encode(void* slot_p, void* callback_ctx, unsigned char** dest_buf
         *dest_buf = packet;
         *segment_len = packet_len;
 
-        client_ctx->last_request = picoquic_current_time();
-
         return packet_len;
     }
+
+#ifdef NOENCODE
+    assert(false);
+#endif
 
     size_t num_segments = src_buf_len / *segment_len;
     unsigned char* packets = malloc(MAX_DNS_QUERY_SIZE * num_segments);
@@ -147,13 +151,18 @@ ssize_t client_encode(void* slot_p, void* callback_ctx, unsigned char** dest_buf
     *dest_buf = packets;
     *segment_len = first_packet_len;
 
-    client_ctx->last_request = picoquic_current_time();
-
     return current_packet - packets;
 }
 
 ssize_t client_decode(void* slot_p, void* callback_ctx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
     *dest_buf = NULL;
+
+#ifdef NODECODE
+    *dest_buf = malloc(src_buf_len);
+    memcpy((void*)*dest_buf, src_buf, src_buf_len);
+
+    return src_buf_len;
+#endif
 
     size_t bufsize = DNS_DECODEBUF_4K * sizeof(dns_decoded_t);
     dns_decoded_t decoded[DNS_DECODEBUF_4K] = {0};
@@ -804,7 +813,6 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     param.is_client = 1;
     param.decode = client_decode;
     param.encode = client_encode;
-    param.delay_max = 5000;
 
     picoquic_network_thread_ctx_t thread_ctx = {0};
     thread_ctx.quic = quic;

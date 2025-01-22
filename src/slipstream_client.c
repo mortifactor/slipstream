@@ -808,7 +808,7 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     // And ensure that gso is on
     // $ ethtool -k lo | grep generic-segmentation-offload
     // generic-segmentation-offload: on
-    param.do_not_use_gso = 1;
+    param.do_not_use_gso = 0;
 
     param.is_client = 1;
     param.decode = client_decode;

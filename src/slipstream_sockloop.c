@@ -50,13 +50,23 @@ static int udp_gso_available = 0;
 #endif
 
 
-int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_socket_ctx_t* s_ctx,
-                            size_t send_buffer_size, size_t send_msg_size, size_t* send_msg_ptr) {
+int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_socket_ctx_t* s_ctx) {
     picoquic_quic_t* quic = thread_ctx->quic;
     picoquic_packet_loop_param_t* param = thread_ctx->param;
     const picoquic_packet_loop_cb_fn loop_callback = thread_ctx->loop_callback;
     void* loop_callback_ctx = thread_ctx->loop_callback_ctx;
     slot_t slots[PICOQUIC_PACKET_LOOP_RECV_MAX] = {0};
+
+    size_t send_buffer_size = param->socket_buffer_size;
+    size_t send_msg_size = 0;
+    size_t* send_msg_ptr = NULL;
+    if (udp_gso_available && !param->do_not_use_gso) {
+        send_buffer_size = 0xFFFF;
+        send_msg_ptr = &send_msg_size;
+    }
+    if (send_buffer_size == 0) {
+        send_buffer_size = 0xffff;
+    }
 
     while (!thread_ctx->thread_should_close) {
         if (loop_callback) {
@@ -311,19 +321,8 @@ void* slipstream_packet_loop(picoquic_network_thread_ctx_t* thread_ctx) {
         return NULL;
     }
 
-    size_t send_buffer_size = param->socket_buffer_size;
-    size_t send_msg_size = 0;
-    size_t* send_msg_ptr = NULL;
-    if (udp_gso_available && !param->do_not_use_gso) {
-        send_buffer_size = 0xFFFF;
-        send_msg_ptr = &send_msg_size;
-    }
-    if (send_buffer_size == 0) {
-        send_buffer_size = 0xffff;
-    }
-
     thread_ctx->thread_is_ready = 1;
-    thread_ctx->return_code = slipstream_packet_loop_(thread_ctx, &s_ctx, send_buffer_size, send_msg_size, send_msg_ptr);
+    thread_ctx->return_code = slipstream_packet_loop_(thread_ctx, &s_ctx);
     thread_ctx->thread_is_ready = 0;
 
     /* Close the sockets */

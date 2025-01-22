@@ -37,7 +37,7 @@ int main(int argc, char** argv)
         usage(argv[0]);
     }
     else if (strcmp(argv[1], "client") == 0) {
-        if (argc != 6) {
+        if (argc != 7) {
             usage(argv[0]);
         }
         else {
@@ -45,7 +45,8 @@ int main(int argc, char** argv)
             char const* resolver_addresses_filename = argv[3];
             const char* domain_name = argv[4];
             const char* cc_algo_id = argv[5];
-            exit_code = picoquic_slipstream_client(local_port, resolver_addresses_filename, domain_name, cc_algo_id);
+            bool gso = strcmp(argv[6], "true") == 0;
+            exit_code = picoquic_slipstream_client(local_port, resolver_addresses_filename, domain_name, cc_algo_id, gso);
         }
     }
     else if (strcmp(argv[1], "server") == 0) {

@@ -2,7 +2,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <picoquic.h>
-#include <picoquic_utils.h>
 #include <picoquic_packet_loop.h>
 #include <picosocks.h>
 #ifdef BUILD_LOGLIB
@@ -701,7 +700,7 @@ static int slipstream_connect(struct sockaddr_storage* server_address,
     return ret;
 }
 
-int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_filename, const char* domain_name, const char* cc_algo_id) {
+int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_filename, const char* domain_name, const char* cc_algo_id, bool gso) {
     /* Start: start the QUIC process */
     int ret = 0;
     uint64_t current_time = 0;
@@ -808,7 +807,7 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     // And ensure that gso is on
     // $ ethtool -k lo | grep generic-segmentation-offload
     // generic-segmentation-offload: on
-    param.do_not_use_gso = 0;
+    param.do_not_use_gso = !gso;
 
     param.is_client = 1;
     param.decode = client_decode;

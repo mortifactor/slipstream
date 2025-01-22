@@ -18,7 +18,7 @@ FROM development AS builder
 COPY . .
 
 RUN --mount=type=cache,target=/usr/src/app/cmake-cache \
-    cmake -Bcmake-cache -H. && \
+    cmake -Bcmake-cache -H. -DCMAKE_BUILD_TYPE=Release && \
     cmake --build cmake-cache --target slipstream && mv cmake-cache/slipstream .
 
 FROM debian:bookworm-slim

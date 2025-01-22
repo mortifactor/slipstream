@@ -68,6 +68,13 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
         send_buffer_size = 0xffff;
     }
 
+    size_t buffer_size;
+    if (param->is_client) {
+        buffer_size = PICOQUIC_MAX_PACKET_SIZE;
+    } else {
+        buffer_size = MAX_DNS_QUERY_SIZE;
+    }
+
     while (!thread_ctx->thread_should_close) {
         if (loop_callback) {
             loop_callback(quic, picoquic_packet_loop_before_select, loop_callback_ctx, s_ctx);
@@ -93,11 +100,11 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
             struct sockaddr_storage local_addr;
             int if_index_to = 0;
             uint8_t received_ecn;
-            uint8_t buffer[1536];
+            uint8_t buffer[buffer_size];
             int is_wake_up_event;
             int socket_rank = -1;
             int bytes_recv = picoquic_packet_loop_select(s_ctx, 1, &peer_addr, &local_addr, &if_index_to, &received_ecn,
-                buffer, sizeof(buffer), delta_t, &is_wake_up_event, thread_ctx, &socket_rank);
+                buffer, buffer_size, delta_t, &is_wake_up_event, thread_ctx, &socket_rank);
             if (bytes_recv < 0) {
                 /* The interrupt error is expected if the loop is closing. */
                 return thread_ctx->thread_should_close ? PICOQUIC_NO_ERROR_TERMINATE_PACKET_LOOP : -1;

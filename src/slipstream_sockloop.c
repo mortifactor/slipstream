@@ -215,7 +215,6 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
                 return bytes_sent;
             }
 
-            slot->responded = 1;
             nb_packets_sent++;
         }
 
@@ -232,9 +231,6 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
             nb_slots_read++;
             if (slot->cnx == NULL) {
                 continue; // in case the slot written was a bogus message
-            }
-            if (slot->responded) {
-                continue; // already responded
             }
 
             slot->cnx->is_poll_requested = 1;

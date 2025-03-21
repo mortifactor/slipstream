@@ -5,21 +5,30 @@ WORKDIR /usr/src/app
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y \
-    build-essential \
     cmake \
     git \
     pkg-config \
     libssl-dev \
     ninja-build \
-    gdb-multiarch
+    clang
 
 FROM development AS builder
 
 COPY . .
 
-RUN --mount=type=cache,target=/usr/src/app/cmake-cache \
-    cmake -Bcmake-cache -H. -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build cmake-cache --target slipstream && mv cmake-cache/slipstream .
+RUN cmake \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_MAKE_PROGRAM=ninja \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -G Ninja \
+    -S /usr/src/app \
+    -B /usr/src/app/cmake-build-release
+
+RUN cmake \
+    --build /usr/src/app/cmake-build-release \
+    --target slipstream \
+    -j 18 && mv cmake-build-release/slipstream .
 
 FROM debian:bookworm-slim
 

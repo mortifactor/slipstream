@@ -704,8 +704,6 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     /* Start: start the QUIC process */
     int ret = 0;
     uint64_t current_time = 0;
-    char const* ticket_store_filename = SLIPSTREAM_CLIENT_TICKET_STORE;
-    char const* token_store_filename = SLIPSTREAM_CLIENT_TOKEN_STORE;
 
     client_domain_name = strdup(domain_name);
     client_domain_name_len = strlen(domain_name);
@@ -732,7 +730,6 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     config.disable_port_blocking = 1;
     config.enable_sslkeylog = 1;
     config.alpn = SLIPSTREAM_ALPN;
-    config.token_file_name = token_store_filename;
 
     /* Create the QUIC context for the server */
     current_time = picoquic_current_time();
@@ -745,7 +742,7 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
         return -1;
     }
 
-    picoquic_set_cookie_mode(quic, 2);
+    picoquic_set_cookie_mode(quic, 0);
     picoquic_set_default_priority(quic, 2);
 #ifdef BUILD_LOGLIB
     picoquic_set_qlog(quic, config.qlog_dir);
@@ -844,13 +841,6 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     /* And finish. */
     printf("Client exit, ret = %d\n", ret);
 
-    /* Save tickets and tokens, and free the QUIC context */
-    if (picoquic_save_session_tickets(quic, ticket_store_filename) != 0) {
-        fprintf(stderr, "Could not store the saved session tickets.\n");
-    }
-    if (picoquic_save_retry_tokens(quic, token_store_filename) != 0) {
-        fprintf(stderr, "Could not save tokens to <%s>.\n", token_store_filename);
-    }
     picoquic_free(quic);
 
     return ret;

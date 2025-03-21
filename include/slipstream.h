@@ -14,8 +14,6 @@ extern "C" {
 #define SLIPSTREAM_INTERNAL_ERROR 0x101
 #define SLIPSTREAM_FILE_CANCEL_ERROR 0x105
 
-#define SLIPSTREAM_CLIENT_TICKET_STORE "sample_ticket_store.bin";
-#define SLIPSTREAM_CLIENT_TOKEN_STORE "sample_token_store.bin";
 #define SLIPSTREAM_QLOG_DIR "./qlog";
 #include <stdbool.h>
 

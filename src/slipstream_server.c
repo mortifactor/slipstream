@@ -628,7 +628,7 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
         return -1;
     }
 
-    picoquic_set_cookie_mode(quic, 2);
+    picoquic_set_cookie_mode(quic, 0);
     picoquic_set_default_priority(quic, 2);
 #ifdef BUILD_LOGLIB
     picoquic_set_qlog(quic, config.qlog_dir);

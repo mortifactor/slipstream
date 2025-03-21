@@ -45,6 +45,7 @@ typedef struct st_slipstream_client_ctx_t {
     bool ready;
     bool closed;
     int listen_sock;
+    size_t ready_mtu;
 } slipstream_client_ctx_t;
 
 char* client_domain_name = NULL;
@@ -627,6 +628,14 @@ int slipstream_client_callback(picoquic_cnx_t* cnx,
         break;
     case picoquic_callback_ready:
         fprintf(stdout, "Connection confirmed.\n");
+        const size_t mtu = client_ctx->ready_mtu;
+        picoquic_set_initial_send_mtu(cnx->quic, mtu, mtu);
+        picoquic_set_mtu_max(cnx->quic, mtu);
+        for (int i = 0; i < cnx->nb_paths; i++) {
+            picoquic_path_t* path = cnx->path[i];
+            path->send_mtu = mtu;
+            path->send_mtu_max_tried = mtu;
+        }
         client_ctx->ready = true;
         slipstream_add_paths(client_ctx);
     default:
@@ -735,6 +744,10 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     current_time = picoquic_current_time();
     // one connection only, freed in slipstream_client_free_context on picoquic close callback
     slipstream_client_ctx_t client_ctx = {0};
+
+    // set MTU for during ready state (after handshake)
+    client_ctx.ready_mtu = 13;
+
     /* Create QUIC context */
     picoquic_quic_t* quic = picoquic_create_and_configure(&config, slipstream_client_callback, &client_ctx, current_time, NULL);
     if (quic == NULL) {

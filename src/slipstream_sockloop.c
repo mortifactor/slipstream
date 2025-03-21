@@ -153,6 +153,10 @@ int slipstream_packet_loop_(picoquic_network_thread_ctx_t* thread_ctx, picoquic_
             if (ret < 0) {
                 return ret;
             }
+            if (last_cnx == NULL) {
+                DBG_PRINTF("last_cnx null in recv", NULL);
+                continue;
+            }
             slot->cnx = last_cnx;
             slot->path_id = last_path_id;
             nb_packet_received++;

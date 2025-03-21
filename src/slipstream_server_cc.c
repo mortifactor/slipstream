@@ -1,4 +1,4 @@
-#include "../include/slipstream_server_cc.h"
+#include "slipstream_server_cc.h"
 
 #include <stdlib.h>
 

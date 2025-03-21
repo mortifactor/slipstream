@@ -211,11 +211,13 @@ slipstream_server_stream_ctx_t* slipstream_server_create_stream_ctx(slipstream_s
     int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (sock_fd < 0) {
         perror("socket() failed");
+        free(stream_ctx);
         return NULL;
     }
 
     if (connect(sock_fd, (struct sockaddr*)&server_ctx->upstream_addr, sizeof(server_ctx->upstream_addr)) < 0) {
         perror("connect() failed");
+        free(stream_ctx);
         return NULL;
     }
 

@@ -21,7 +21,8 @@
 #include "picoquic_logger.h"
 #include "slipstream.h"
 #include "slipstream_inline_dots.h"
-#include "../include/slipstream_server_cc.h"
+#include "slipstream_llm.h"
+#include "slipstream_server_cc.h"
 #include "slipstream_slot.h"
 #include "slipstream_utils.h"
 #include "SPCDNS/src/dns.h"
@@ -29,6 +30,26 @@
 
 char* server_domain_name = NULL;
 size_t server_domain_name_len = 0;
+
+typedef struct st_slipstream_server_stream_ctx_t {
+    struct st_slipstream_server_stream_ctx_t* next_stream;
+    struct st_slipstream_server_stream_ctx_t* previous_stream;
+    int fd;
+    uint64_t stream_id;
+    volatile sig_atomic_t set_active;
+    int syn_received;
+    int syn_sent;
+} slipstream_server_stream_ctx_t;
+
+typedef struct st_slipstream_server_ctx_t {
+    picoquic_cnx_t* cnx;
+    slipstream_server_stream_ctx_t* first_stream;
+    picoquic_network_thread_ctx_t* thread_ctx;
+    struct sockaddr_storage upstream_addr;
+    struct st_slipstream_server_ctx_t* prev_ctx;
+    struct st_slipstream_server_ctx_t* next_ctx;
+    llm_connection_t* llm_conn;
+} slipstream_server_ctx_t;
 
 ssize_t server_encode(void* slot_p, void* callback_ctx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
     // we don't support segmentation in the server
@@ -106,6 +127,7 @@ ssize_t server_decode(void* slot_p, void* callback_ctx, unsigned char** dest_buf
     *dest_buf = NULL;
 
     slot_t* slot = slot_p;
+    slipstream_server_ctx_t* default_ctx = callback_ctx;
 
     // DNS packets arrive from random source ports, so:
     // * save the original address in the dns query slot
@@ -159,44 +181,36 @@ ssize_t server_decode(void* slot_p, void* callback_ctx, unsigned char** dest_buf
         return 0;
     }
 
-    // copy the subdomain from name to a new buffer
-    char data_buf[data_len];
-    memcpy(data_buf, question->name, data_len);
-    data_buf[data_len] = '\0';
-    const size_t encoded_len = slipstream_inline_undotify(data_buf, data_len);
+    char* decoded_buf = malloc(data_len);
+    ssize_t decoded_len;
+    if (default_ctx->llm_conn) {
+        decoded_len = llm_decode(default_ctx->llm_conn, decoded_buf, data_len,  (const char*) question->name, data_len);
+        if (decoded_len < 0) {
+            // DBG_PRINTF socket errono
+            DBG_PRINTF("error decoding with LLM: %lu (%s)", decoded_len, strerror(errno));
+            return -1;
+        }
+    } else {
+        // copy the subdomain from name to a new buffer
+        char data_buf[data_len];
+        memcpy(data_buf, question->name, data_len);
+        data_buf[data_len] = '\0';
 
-    char* decoded_buf = malloc(encoded_len);
-    const size_t decoded_len = b32_decode(decoded_buf, data_buf, encoded_len, false);
-    if (decoded_len == (size_t) -1) {
-        free(decoded_buf);
-        DBG_PRINTF("error decoding base32: %lu", decoded_len);
-        slot->error = RCODE_SERVER_FAILURE;
-        return 0;
+        const size_t encoded_len = slipstream_inline_undotify(data_buf, data_len);
+        decoded_len = b32_decode(decoded_buf, data_buf, encoded_len, false);
+        if (decoded_len == (size_t) -1) {
+            free(decoded_buf);
+            DBG_PRINTF("error decoding base32: %lu", decoded_len);
+            slot->error = RCODE_SERVER_FAILURE;
+            return 0;
+        }
     }
+
 
     *dest_buf = decoded_buf;
 
     return decoded_len;
 }
-
-typedef struct st_slipstream_server_stream_ctx_t {
-    struct st_slipstream_server_stream_ctx_t* next_stream;
-    struct st_slipstream_server_stream_ctx_t* previous_stream;
-    int fd;
-    uint64_t stream_id;
-    volatile sig_atomic_t set_active;
-    int syn_received;
-    int syn_sent;
-} slipstream_server_stream_ctx_t;
-
-typedef struct st_slipstream_server_ctx_t {
-    picoquic_cnx_t* cnx;
-    slipstream_server_stream_ctx_t* first_stream;
-    picoquic_network_thread_ctx_t* thread_ctx;
-    struct sockaddr_storage upstream_addr;
-    struct st_slipstream_server_ctx_t* prev_ctx;
-    struct st_slipstream_server_ctx_t* next_ctx;
-} slipstream_server_ctx_t;
 
 slipstream_server_stream_ctx_t* slipstream_server_create_stream_ctx(slipstream_server_ctx_t* server_ctx,
                                                                     uint64_t stream_id) {
@@ -652,6 +666,11 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     param.encode = server_encode;
     // param.delay_max = 5000;
 
+    if (llm_create_connection(&default_context.llm_conn, 8001) < 0) {
+        perror("unable to create LLM connection");
+        exit(EXIT_FAILURE);
+    }
+
     picoquic_network_thread_ctx_t thread_ctx = {0};
     thread_ctx.quic = quic;
     thread_ctx.param = &param;
@@ -671,6 +690,7 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     /* And finish. */
     printf("Server exit, ret = %d\n", ret);
 
+    free(default_context.llm_conn);
     picoquic_free(quic);
 
     return ret;

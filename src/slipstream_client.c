@@ -8,6 +8,7 @@
 #include <autoqlog.h>
 #endif
 #include <assert.h>
+#include <math.h>
 #include <picoquic_internal.h>
 #include <pthread.h>
 #include <slipstream_sockloop.h>
@@ -21,6 +22,7 @@
 #include "picoquic_config.h"
 #include "slipstream.h"
 #include "slipstream_inline_dots.h"
+#include "slipstream_llm.h"
 #include "slipstream_resolver_addresses.h"
 #include "slipstream_utils.h"
 #include "SPCDNS/src/dns.h"
@@ -46,15 +48,40 @@ typedef struct st_slipstream_client_ctx_t {
     bool closed;
     int listen_sock;
     size_t ready_mtu;
+    llm_connection_t* llm_conn;
 } slipstream_client_ctx_t;
 
 char* client_domain_name = NULL;
 size_t client_domain_name_len = 0;
 
-ssize_t client_encode_segment(dns_packet_t* packet, size_t* packet_len, const unsigned char* src_buf, size_t src_buf_len) {
+ssize_t client_encode_segment(slipstream_client_ctx_t* client_ctx, dns_packet_t* packet, size_t* packet_len, const unsigned char* src_buf, size_t src_buf_len) {
     char name[255];
-    const size_t len = b32_encode(&name[0], (const char*) src_buf, src_buf_len, true, false);
-    const size_t encoded_len = slipstream_inline_dotify(name, 255, len);
+    size_t space = sizeof(name) - 1 - client_domain_name_len - 2;
+    ssize_t encoded_len;
+    if (client_ctx->llm_conn != NULL) {
+        encoded_len = llm_encode(client_ctx->llm_conn, &name[0], space, (const char*) src_buf, src_buf_len);
+        if (encoded_len < 0) {
+            DBG_PRINTF("error encoding with LLM: %lu (%s)", encoded_len, strerror(errno));
+            return -1;
+        }
+    } else {
+        // regular base32 encoding
+        const size_t expected_len = ceil(src_buf_len * 1.6);
+        if (expected_len > space) {
+            DBG_PRINTF("encoded length %lu > %lu", expected_len, space);
+            return -1;
+        }
+        const size_t len = b32_encode(&name[0], (const char*) src_buf, src_buf_len, true, false);
+        if (len != expected_len) {
+            DBG_PRINTF("unexpected base32 encoded length %lu != %lu", len, expected_len);
+        }
+        encoded_len = (ssize_t) slipstream_inline_dotify(name, 255, len);
+        if (encoded_len < 0) {
+            DBG_PRINTF("error encoding base32", NULL);
+            return -1;
+        }
+    }
+
     name[encoded_len] = '.';
 
     memcpy(&name[encoded_len + 1], client_domain_name, client_domain_name_len);
@@ -94,6 +121,8 @@ ssize_t client_encode_segment(dns_packet_t* packet, size_t* packet_len, const un
 }
 
 ssize_t client_encode(void* slot_p, void* callback_ctx, unsigned char** dest_buf, const unsigned char* src_buf, size_t src_buf_len, size_t* segment_len, struct sockaddr_storage* peer_addr, struct sockaddr_storage* local_addr) {
+    slipstream_client_ctx_t* client_ctx = callback_ctx;
+
     // optimize path for single segment
     if (src_buf_len <= *segment_len) {
 #ifdef NOENCODE
@@ -104,7 +133,7 @@ ssize_t client_encode(void* slot_p, void* callback_ctx, unsigned char** dest_buf
 #endif
         size_t packet_len = MAX_DNS_QUERY_SIZE;
         unsigned char* packet = malloc(packet_len);
-        const ssize_t ret = client_encode_segment((dns_packet_t*) packet, &packet_len, src_buf, src_buf_len);
+        const ssize_t ret = client_encode_segment(client_ctx, (dns_packet_t*) packet, &packet_len, src_buf, src_buf_len);
         if (ret < 0) {
             free(packet);
             return -1;
@@ -128,7 +157,7 @@ ssize_t client_encode(void* slot_p, void* callback_ctx, unsigned char** dest_buf
     size_t first_packet_len = 0;
     for (size_t i = 0; i < num_segments; i++) {
         size_t packet_len = MAX_DNS_QUERY_SIZE;
-        const ssize_t ret = client_encode_segment((dns_packet_t*) current_packet, &packet_len, segment, *segment_len);
+        const ssize_t ret = client_encode_segment(client_ctx, (dns_packet_t*) current_packet, &packet_len, segment, *segment_len);
         if (ret < 0) {
             free(packets);
             return -1;
@@ -823,6 +852,12 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     param.decode = client_decode;
     param.encode = client_encode;
 
+    if (llm_create_connection(&client_ctx.llm_conn, 8000) < 0) {
+        perror("unable to create LLM connection");
+        close(client_ctx.listen_sock);
+        exit(EXIT_FAILURE);
+    }
+
     picoquic_network_thread_ctx_t thread_ctx = {0};
     thread_ctx.quic = quic;
     thread_ctx.param = &param;
@@ -854,6 +889,7 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     /* And finish. */
     printf("Client exit, ret = %d\n", ret);
 
+    free(client_ctx.llm_conn);
     picoquic_free(quic);
 
     return ret;

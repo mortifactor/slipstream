@@ -39,6 +39,7 @@ add_executable(slipstream
         src/slipstream.c
         src/slipstream_client.c
         src/slipstream_inline_dots.c
+        src/slipstream_llm.c
         src/slipstream_resolver_addresses.c
         src/slipstream_server.c
         src/slipstream_server_cc.c
@@ -46,6 +47,7 @@ add_executable(slipstream
         src/slipstream_utils.c
         include/slipstream.h
         include/slipstream_inline_dots.h
+        include/slipstream_llm.h
         include/slipstream_resolver_addresses.h
         include/slipstream_server_cc.h
         include/slipstream_slot.h

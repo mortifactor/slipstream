@@ -666,10 +666,10 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
     param.encode = server_encode;
     // param.delay_max = 5000;
 
-    if (llm_create_connection(&default_context.llm_conn, 8001) < 0) {
-        perror("unable to create LLM connection");
-        exit(EXIT_FAILURE);
-    }
+    // if (llm_create_connection(&default_context.llm_conn, 8001) < 0) {
+    //     perror("unable to create LLM connection");
+    //     exit(EXIT_FAILURE);
+    // }
 
     picoquic_network_thread_ctx_t thread_ctx = {0};
     thread_ctx.quic = quic;

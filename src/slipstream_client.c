@@ -714,7 +714,7 @@ static int slipstream_connect(struct sockaddr_storage* server_address,
     }
 
     // 400ms
-    picoquic_enable_keep_alive(*cnx, 400000);
+    // picoquic_enable_keep_alive(*cnx, 400000);
 
     /* Document connection in client's context */
     client_ctx->cnx = *cnx;
@@ -748,7 +748,8 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
 
     // int mtu = 1200;
     // int mtu = 129;
-    int mtu = 145;
+    int mtu = 150;
+    // int mtu = 30;
 
     /* Create config */
     picoquic_quic_config_t config;
@@ -762,7 +763,7 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     config.initial_send_mtu_ipv4 = mtu;
     config.initial_send_mtu_ipv6 = mtu;
     config.cc_algo_id = cc_algo_id;
-    config.multipath_option = 1;
+    config.multipath_option = 0;
     config.use_long_log = 1;
     config.do_preemptive_repeat = 1;
     config.disable_port_blocking = 1;
@@ -775,7 +776,7 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     slipstream_client_ctx_t client_ctx = {0};
 
     // set MTU for during ready state (after handshake)
-    client_ctx.ready_mtu = 13;
+    client_ctx.ready_mtu = 150;
 
     /* Create QUIC context */
     picoquic_quic_t* quic = picoquic_create_and_configure(&config, slipstream_client_callback, &client_ctx, current_time, NULL);
@@ -852,11 +853,11 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     param.decode = client_decode;
     param.encode = client_encode;
 
-    if (llm_create_connection(&client_ctx.llm_conn, 8000) < 0) {
-        perror("unable to create LLM connection");
-        close(client_ctx.listen_sock);
-        exit(EXIT_FAILURE);
-    }
+    // if (llm_create_connection(&client_ctx.llm_conn, 8000) < 0) {
+    //     perror("unable to create LLM connection");
+    //     close(client_ctx.listen_sock);
+    //     exit(EXIT_FAILURE);
+    // }
 
     picoquic_network_thread_ctx_t thread_ctx = {0};
     thread_ctx.quic = quic;

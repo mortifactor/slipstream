@@ -278,7 +278,7 @@ void slipstream_server_mark_active_pass(slipstream_server_ctx_t* server_ctx) {
     while (stream_ctx != NULL) {
         if (stream_ctx->set_active) {
             stream_ctx->set_active = 0;
-            printf("[%lu:%d] activate: stream\n", stream_ctx->stream_id, stream_ctx->fd);
+            DBG_PRINTF("[stream_id=%d][fd=%d] activate: stream", stream_ctx->stream_id, stream_ctx->fd);
             picoquic_mark_active_stream(server_ctx->cnx, stream_ctx->stream_id, 1, stream_ctx);
         }
         stream_ctx = stream_ctx->next_stream;
@@ -342,7 +342,7 @@ void* slipstream_server_poller(void* arg) {
         if (ret != 0) {
             fprintf(stderr, "poll: could not wake up network thread, ret = %d\n", ret);
         }
-        printf("[%lu:%d] wakeup\n", args->stream_ctx->stream_id, args->fd);
+        DBG_PRINTF("[stream_id=%d][fd=%d] wakeup", args->stream_ctx->stream_id, args->fd);
 
         break;
     }
@@ -408,6 +408,8 @@ int slipstream_server_callback(picoquic_cnx_t* cnx,
             printf("[%lu:%d] marked active\n", stream_id, stream_ctx->fd);
         }
 
+        // DBG_PRINTF("[stream_id=%d] quic_recv->send %lu bytes", stream_id, length);
+
         // skip syn
         if (length > 0 && !stream_ctx->syn_received) {
             DBG_PRINTF("[stream_id=%d] recv syn", stream_ctx->stream_id);
@@ -419,13 +421,12 @@ int slipstream_server_callback(picoquic_cnx_t* cnx,
             DBG_PRINTF("[stream_id=%d][leftover_length=%d]", stream_ctx->stream_id, length);
         }
 
-        // printf("[%lu:%d] quic_recv->send %lu bytes\n", stream_id, stream_ctx->fd, length);
         if (length > 0) {
             ssize_t bytes_sent = send(stream_ctx->fd, bytes, length, MSG_NOSIGNAL);
             if (bytes_sent < 0) {
                 if (errno == EPIPE) {
                     /* Connection closed */
-                    printf("[%lu:%d] send: closed stream\n", stream_id, stream_ctx->fd);
+                    DBG_PRINTF("[stream_id=%d] send: closed stream", stream_ctx->stream_id);
 
                     (void)picoquic_reset_stream(cnx, stream_id, SLIPSTREAM_FILE_CANCEL_ERROR);
                     return 0;
@@ -434,13 +435,13 @@ int slipstream_server_callback(picoquic_cnx_t* cnx,
                     /* TODO: this is bad because we don't have a way to backpressure */
                 }
 
-                printf("[%lu:%d] send: error: %s (%d)\n", stream_id, stream_ctx->fd, strerror(errno), errno);
+                DBG_PRINTF("[stream_id=%d] send: error: %s (%d)", stream_id, strerror(errno), errno);
                 (void)picoquic_reset_stream(cnx, stream_id, SLIPSTREAM_INTERNAL_ERROR);
                 return 0;
             }
         }
         if (fin_or_event == picoquic_callback_stream_fin) {
-            printf("[%lu:%d] fin\n", stream_id, stream_ctx->fd);
+            DBG_PRINTF("[stream_id=%d] fin", stream_ctx->stream_id);
             /* Close the local_sock fd */
             close(stream_ctx->fd);
             stream_ctx->fd = -1;
@@ -457,7 +458,7 @@ int slipstream_server_callback(picoquic_cnx_t* cnx,
              * connection. */
         }
         else {
-            printf("[%lu:%d] stream reset\n", stream_id, stream_ctx->fd);
+            DBG_PRINTF("[stream_id=%d] stream reset", stream_ctx->stream_id);
 
             slipstream_server_free_stream_context(server_ctx, stream_ctx);
             picoquic_reset_stream(cnx, stream_id, SLIPSTREAM_FILE_CANCEL_ERROR);
@@ -496,9 +497,9 @@ int slipstream_server_callback(picoquic_cnx_t* cnx,
 
             int length_available;
             ret = ioctl(stream_ctx->fd, FIONREAD, &length_available);
-            // printf("[%lu:%d] recv->quic_send (available %d)\n", stream_id, stream_ctx->fd, length_available);
+            // DBG_PRINTF("[stream_id=%d] recv->quic_send (available %d)", stream_id, length_available);
             if (ret < 0) {
-                printf("[%lu:%d] ioctl error: %s (%d)\n", stream_id, stream_ctx->fd, strerror(errno), errno);
+                DBG_PRINTF("[stream_id=%d] ioctl error: %s (%d)", stream_ctx->stream_id, strerror(errno), errno);
                 /* TODO: why would it return an error? */
                 (void)picoquic_reset_stream(cnx, stream_id, SLIPSTREAM_INTERNAL_ERROR);
                 break;
@@ -514,7 +515,7 @@ int slipstream_server_callback(picoquic_cnx_t* cnx,
                     // printf("[%lu:%d] recv->quic_send empty errno set: %s\n", stream_id, stream_ctx->fd, strerror(errno));
                     /* No bytes available, wait for next event */
                     (void)picoquic_provide_stream_data_buffer(bytes, 0, 0, 0);
-                    printf("[%lu:%d] recv->quic_send: empty, disactivate\n\n", stream_id, stream_ctx->fd);
+                    DBG_PRINTF("[stream_id=%d] recv->quic_send: empty, disactivate", stream_ctx->stream_id);
 
                     slipstream_server_poller_args* args = malloc(sizeof(slipstream_server_poller_args));
                     args->fd = stream_ctx->fd;
@@ -531,7 +532,7 @@ int slipstream_server_callback(picoquic_cnx_t* cnx,
                     pthread_detach(thread);
                 }
                 if (bytes_read == 0) {
-                    printf("[%lu:%d] recv: closed stream\n", stream_id, stream_ctx->fd);
+                    DBG_PRINTF("[stream_id=%d] recv: closed stream", stream_ctx->stream_id);
                     (void)picoquic_reset_stream(cnx, stream_id, SLIPSTREAM_FILE_CANCEL_ERROR);
                     return 0;
                 }

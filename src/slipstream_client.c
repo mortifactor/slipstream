@@ -85,7 +85,7 @@ ssize_t client_encode_segment(dns_packet_t* packet, size_t* packet_len, const un
 
     const dns_rcode_t rc = dns_encode(packet, packet_len, &query);
     if (rc != RCODE_OKAY) {
-        DBG_PRINTF( "dns_encode() = (%d) %s\n", rc, dns_rcode_text(rc));
+        DBG_PRINTF( "dns_encode() = (%d) %s: %s\n", rc, dns_rcode_text(rc), name);
         return -1;
     }
 

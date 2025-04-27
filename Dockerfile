@@ -16,19 +16,19 @@ FROM development AS builder
 
 COPY . .
 
-RUN cmake \
+RUN --mount=type=cache,target=/usr/src/app/cmake-build-release \
+    cmake \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_MAKE_PROGRAM=ninja \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
     -G Ninja \
     -S /usr/src/app \
-    -B /usr/src/app/cmake-build-release
-
-RUN cmake \
+    -B /usr/src/app/cmake-build-release && \
+    cmake \
     --build /usr/src/app/cmake-build-release \
     --target slipstream \
-    -j 18 && mv cmake-build-release/slipstream .
+    -j 18 && cp cmake-build-release/slipstream .
 
 FROM debian:bookworm-slim
 

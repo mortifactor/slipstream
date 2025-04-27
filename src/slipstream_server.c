@@ -185,8 +185,6 @@ typedef struct st_slipstream_server_stream_ctx_t {
     int fd;
     uint64_t stream_id;
     volatile sig_atomic_t set_active;
-    int syn_received;
-    int syn_sent;
 } slipstream_server_stream_ctx_t;
 
 typedef struct st_slipstream_server_ctx_t {
@@ -410,18 +408,11 @@ int slipstream_server_callback(picoquic_cnx_t* cnx,
 
         // DBG_PRINTF("[stream_id=%d] quic_recv->send %lu bytes", stream_id, length);
 
-        // skip syn
-        if (length > 0 && !stream_ctx->syn_received) {
-            DBG_PRINTF("[stream_id=%d] recv syn", stream_ctx->stream_id);
-            length--;
-            bytes++;
-            stream_ctx->syn_received = 1;
-            picoquic_mark_active_stream(cnx, stream_id, 1, stream_ctx);
-            picoquic_set_stream_priority(cnx, stream_id, 0);
-            DBG_PRINTF("[stream_id=%d][leftover_length=%d]", stream_ctx->stream_id, length);
-        }
-
         if (length > 0) {
+            DBG_PRINTF("[stream_id=%d] conn opened", stream_ctx->stream_id);
+            picoquic_mark_active_stream(cnx, stream_id, 1, stream_ctx);
+            DBG_PRINTF("[stream_id=%d][leftover_length=%d]", stream_ctx->stream_id, length);
+
             ssize_t bytes_sent = send(stream_ctx->fd, bytes, length, MSG_NOSIGNAL);
             if (bytes_sent < 0) {
                 if (errno == EPIPE) {
@@ -481,20 +472,6 @@ int slipstream_server_callback(picoquic_cnx_t* cnx,
             /* This should never happen */
         }
         else {
-            if (stream_ctx->syn_received && !stream_ctx->syn_sent) {
-                DBG_PRINTF("[stream_id=%d] send syn", stream_ctx->stream_id);
-                uint8_t* buffer = picoquic_provide_stream_data_buffer(bytes, 1, 0, 1);
-                if (buffer == NULL) {
-                    /* Should never happen according to callback spec. */
-                    break;
-                }
-                buffer[0] = 0;
-                stream_ctx->syn_sent = 1;
-                picoquic_set_stream_priority(cnx, stream_id, cnx->quic->default_stream_priority);
-                break;
-            }
-            // allow to send on stream even if we haven't syn_received
-
             int length_available;
             ret = ioctl(stream_ctx->fd, FIONREAD, &length_available);
             // DBG_PRINTF("[stream_id=%d] recv->quic_send (available %d)", stream_id, length_available);

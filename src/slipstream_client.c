@@ -32,8 +32,6 @@ typedef struct st_slipstream_client_stream_ctx_t {
     int fd;
     uint64_t stream_id;
     volatile sig_atomic_t set_active;
-    int syn_sent;
-    int syn_received;
 } slipstream_client_stream_ctx_t;
 
 typedef struct st_slipstream_client_ctx_t {
@@ -416,7 +414,6 @@ void* slipstream_client_accepter(void* arg) {
         }
 
         printf("[%lu:%d] accept: connection\n[%lu:%d] wakeup\n", stream_ctx->stream_id, client_sock,  stream_ctx->stream_id, client_sock);
-        break;
     }
 
     free(args);
@@ -444,27 +441,6 @@ int slipstream_client_callback(picoquic_cnx_t* cnx,
             /* This is unexpected, as all contexts were declared when initializing the
              * connection. */
             return 0;
-        }
-
-        // skip syn
-        if (length > 0 && !stream_ctx->syn_received) {
-            DBG_PRINTF("recv syn %lu\n", stream_id);
-            length--;
-            bytes++;
-            stream_ctx->syn_received = 1;
-
-            // allow accepting next connection
-            slipstream_client_accepter_args* args = malloc(sizeof(slipstream_client_accepter_args));
-            args->fd = client_ctx->listen_sock;
-            args->cnx = cnx;
-            args->client_ctx = client_ctx;
-            args->thread_ctx = client_ctx->thread_ctx;
-
-            pthread_t thread;
-            if (pthread_create(&thread, NULL, slipstream_client_accepter, args) != 0) {
-                perror("pthread_create() failed for thread");
-                free(args);
-            }
         }
 
         // printf("[%lu:%d] quic_recv->send %lu bytes\n", stream_id, stream_ctx->fd, length);
@@ -509,19 +485,6 @@ int slipstream_client_callback(picoquic_cnx_t* cnx,
 
             slipstream_client_free_stream_ctx(client_ctx, stream_ctx);
             picoquic_reset_stream(cnx, stream_id, SLIPSTREAM_FILE_CANCEL_ERROR);
-
-            // allow accepting next connection
-            slipstream_client_accepter_args* args = malloc(sizeof(slipstream_client_accepter_args));
-            args->fd = client_ctx->listen_sock;
-            args->cnx = cnx;
-            args->client_ctx = client_ctx;
-            args->thread_ctx = client_ctx->thread_ctx;
-
-            pthread_t thread;
-            if (pthread_create(&thread, NULL, slipstream_client_accepter, args) != 0) {
-                perror("pthread_create() failed for thread");
-                free(args);
-            }
         }
         break;
     case picoquic_callback_stateless_reset:
@@ -539,19 +502,6 @@ int slipstream_client_callback(picoquic_cnx_t* cnx,
             /* This should never happen */
         }
         else {
-            if (!stream_ctx->syn_sent) {
-                DBG_PRINTF("send syn %lu\n", stream_id);
-                uint8_t* buffer = picoquic_provide_stream_data_buffer(bytes, 1, 0, 1);
-                if (buffer == NULL) {
-                    /* Should never happen according to callback spec. */
-                    break;
-                }
-                buffer[0] = 0;
-                stream_ctx->syn_sent = 1;
-                break;
-            }
-            // allow to send on stream even if we haven't syn_received
-
             int length_available;
             ret = ioctl(stream_ctx->fd, FIONREAD, &length_available);
             // printf("[%lu:%d] recv->quic_send (available %d)\n", stream_id, stream_ctx->fd, length_available);

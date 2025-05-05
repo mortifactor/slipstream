@@ -221,7 +221,7 @@ slipstream_client_stream_ctx_t* slipstream_client_create_stream_ctx(picoquic_cnx
         client_ctx->first_stream = stream_ctx;
     }
     stream_ctx->fd = sock_fd;
-    stream_ctx->stream_id = picoquic_get_next_local_stream_id(client_ctx->cnx, 0);
+    stream_ctx->stream_id = -1;
 
     return stream_ctx;
 }
@@ -260,6 +260,10 @@ void slipstream_client_mark_active_pass(slipstream_client_ctx_t* client_ctx) {
 
     while (stream_ctx != NULL) {
         if (stream_ctx->set_active) {
+            if (stream_ctx->stream_id == -1) {
+                stream_ctx->stream_id = picoquic_get_next_local_stream_id(client_ctx->cnx, 0);
+                printf("[%lu:%d] assigned stream id\n", stream_ctx->stream_id, stream_ctx->fd);
+            }
             stream_ctx->set_active = 0;
             printf("[%lu:%d] activate: stream\n", stream_ctx->stream_id, stream_ctx->fd);
             picoquic_mark_active_stream(client_ctx->cnx, stream_ctx->stream_id, 1, stream_ctx);
@@ -393,11 +397,28 @@ void* slipstream_client_accepter(void* arg) {
         int client_sock = accept(args->fd, (struct sockaddr*)&client_addr, &client_len);
         if (client_sock < 0) {
             if (errno == EINTR) {
+                fprintf(stderr, "my ass?");
                 continue;
             }
             perror("accept() failed");
             break;
         }
+
+        char client_ip_str[INET_ADDRSTRLEN]; // Buffer for the IP address string
+
+        // Convert binary IP address to string representation
+        if (inet_ntop(AF_INET, &client_addr.sin_addr, client_ip_str, sizeof(client_ip_str)) == NULL) {
+            perror("inet_ntop failed");
+            close(client_sock); // Close socket if IP conversion fails
+            continue; // Or break, depending on desired error handling
+        }
+
+        // Convert port number from network byte order to host byte order
+        uint16_t client_port = ntohs(client_addr.sin_port);
+
+        // Print the connection details
+        fprintf(stderr, "Accepted connection from %s:%u on socket %d\n", client_ip_str, client_port, client_sock);
+        // --- End printing section ---
 
         slipstream_client_stream_ctx_t* stream_ctx = slipstream_client_create_stream_ctx(args->cnx, args->client_ctx, client_sock);
         if (stream_ctx == NULL) {
@@ -558,6 +579,18 @@ int slipstream_client_callback(picoquic_cnx_t* cnx,
             }
             // printf("[%lu:%d] recv->quic_send recv %d bytes into quic\n", stream_id, stream_ctx->fd, length_to_read);
             ssize_t bytes_read = recv(stream_ctx->fd, buffer, length_to_read, MSG_DONTWAIT);
+
+            // print the bytes as UTF-8 to stderr for debugging
+            fprintf(stdout, "[%lu:%d] raw bytes:\n", stream_id, stream_ctx->fd);
+            for (size_t i = 0; i < bytes_read; i++) {
+                if (buffer[i] >= 32 && buffer[i] <= 126) {
+                    fprintf(stdout, "%c", buffer[i]);
+                } else {
+                    fprintf(stdout, "\\x%02x", buffer[i]);
+                }
+            }
+            fprintf(stdout, "\n");
+
             // printf("[%lu:%d] recv->quic_send recv done %d bytes into quic\n", stream_id, stream_ctx->fd, bytes_read);
             if (bytes_read == 0) {
                 printf("Closed connection on sock %d on recv", stream_ctx->fd);

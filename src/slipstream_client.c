@@ -21,10 +21,10 @@
 #include "picoquic_config.h"
 #include "slipstream.h"
 #include "slipstream_inline_dots.h"
-#include "slipstream_resolver_addresses.h"
 #include "slipstream_utils.h"
 #include "SPCDNS/src/dns.h"
 #include "SPCDNS/src/mappings.h"
+
 
 typedef struct st_slipstream_client_stream_ctx_t {
     struct st_slipstream_client_stream_ctx_t* next_stream;
@@ -683,7 +683,7 @@ static int slipstream_connect(struct sockaddr_storage* server_address,
     return ret;
 }
 
-int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_filename, const char* domain_name, const char* cc_algo_id, bool gso) {
+int picoquic_slipstream_client(int listen_port, struct st_address_t* server_addresses, size_t server_address_count, const char* domain_name, const char* cc_algo_id, bool gso) {
     /* Start: start the QUIC process */
     int ret = 0;
     uint64_t current_time = 0;
@@ -691,9 +691,9 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     client_domain_name = strdup(domain_name);
     client_domain_name_len = strlen(domain_name);
 
-    // int mtu = 1200;
-    // int mtu = 129;
-    int mtu = 145;
+    double mtu_d = 240 - (double) client_domain_name_len;
+    mtu_d = mtu_d / 1.6;
+    int mtu = (int) mtu_d;
 
     /* Create config */
     picoquic_quic_config_t config;
@@ -736,12 +736,9 @@ int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_f
     // picoquic_set_log_level(quic, 1);
     // TODO: idle timeout?
 
-    /* Read the server address list from the file */
-    client_ctx.server_addresses = read_resolver_addresses(resolver_addresses_filename, &client_ctx.server_address_count);
-    if (!client_ctx.server_addresses) {
-        printf("Failed to read IP addresses\n");
-        return 1;
-    }
+    /* Parse the server addresses directly */
+    client_ctx.server_addresses = server_addresses;
+    client_ctx.server_address_count = server_address_count;
 
     picoquic_cnx_t* cnx = NULL;
     ret = slipstream_connect(&client_ctx.server_addresses[0].server_address, quic, &cnx, &client_ctx);

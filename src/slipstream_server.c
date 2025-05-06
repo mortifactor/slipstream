@@ -640,15 +640,14 @@ void server_sighandler(int signum) {
 }
 
 int picoquic_slipstream_server(int server_port, const char* server_cert, const char* server_key,
-                               char const* upstream_name, int upstream_port, const char* domain_name) {
+                               struct sockaddr_storage* target_address, const char* domain_name) {
     /* Start: start the QUIC process with cert and key files */
     int ret = 0;
     uint64_t current_time = 0;
     slipstream_server_ctx_t default_context = {0};
-    DBG_PRINTF("Starting Picoquic Sample server on port %d", server_port);
 
-    int is_name = 0;
-    picoquic_get_server_address(upstream_name, upstream_port, &default_context.upstream_addr, &is_name);
+    // Store the target address directly - no need to resolve it here anymore
+    memcpy(&default_context.upstream_addr, target_address, sizeof(struct sockaddr_storage));
 
     server_domain_name = strdup(domain_name);
     server_domain_name_len = strlen(domain_name);
@@ -731,3 +730,4 @@ int picoquic_slipstream_server(int server_port, const char* server_cert, const c
 
     return ret;
 }
+

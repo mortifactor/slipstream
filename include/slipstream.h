@@ -17,12 +17,16 @@ extern "C" {
 #define SLIPSTREAM_QLOG_DIR "./qlog";
 #include <stdbool.h>
 
+typedef struct st_address_t {
+    struct sockaddr_storage server_address;
+    bool added;
+} address_t;
 
-int picoquic_slipstream_client(int listen_port, char const* resolver_addresses_filename, const char* domain_name,
+int picoquic_slipstream_client(int listen_port, struct st_address_t* server_addresses, size_t server_address_count, const char* domain_name,
                                const char* cc_algo_id, bool gso);
 
-int picoquic_slipstream_server(int server_port, const char* pem_cert, const char* pem_key, char const* upstream_name,
-                               int upstream_port, const char* domain_name);
+int picoquic_slipstream_server(int server_port, const char* pem_cert, const char* pem_key, 
+                               struct sockaddr_storage* target_address, const char* domain_name);
 
 #ifdef __cplusplus
 }

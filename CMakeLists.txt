@@ -20,13 +20,9 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
 endif()
 if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
-    list(APPEND PICOQUIC_ADDITIONAL_C_FLAGS -Og)
-    list(APPEND PICOQUIC_ADDITIONAL_CXX_FLAGS -Og)
     list(APPEND PICOQUIC_COMPILE_DEFINITIONS BUILD_LOGLIB)
     set(BUILD_LOGLIB ON)
 else()
-    list(APPEND PICOQUIC_ADDITIONAL_C_FLAGS -O3)
-    list(APPEND PICOQUIC_ADDITIONAL_CXX_FLAGS -O3)
     set(BUILD_LOGLIB OFF)
 endif()
 
@@ -35,18 +31,13 @@ if(POLICY CMP0048)
 endif()
 add_subdirectory(extern/picoquic)
 
-add_executable(slipstream
-        src/slipstream.c
-        src/slipstream_client.c
+# Common source files for both client and server
+set(COMMON_SOURCES
         src/slipstream_inline_dots.c
-        src/slipstream_resolver_addresses.c
-        src/slipstream_server.c
-        src/slipstream_server_cc.c
         src/slipstream_sockloop.c
         src/slipstream_utils.c
         include/slipstream.h
         include/slipstream_inline_dots.h
-        include/slipstream_resolver_addresses.h
         include/slipstream_server_cc.h
         include/slipstream_slot.h
         include/slipstream_sockloop.h
@@ -66,13 +57,34 @@ add_executable(slipstream
         extern/SPCDNS/src/output.c
         extern/SPCDNS/src/output.h
 )
-target_link_libraries(slipstream PRIVATE m)
-target_link_libraries(slipstream PRIVATE picoquic-core)
+
+# Client binary
+add_executable(slipstream-client
+        src/slipstream_client_cli.c
+        src/slipstream_client.c
+        ${COMMON_SOURCES}
+)
+target_link_libraries(slipstream-client PRIVATE m)
+target_link_libraries(slipstream-client PRIVATE picoquic-core)
 if (BUILD_LOGLIB)
-    target_link_libraries(slipstream PRIVATE picoquic-log)
+    target_link_libraries(slipstream-client PRIVATE picoquic-log)
 endif ()
+target_include_directories(slipstream-client PRIVATE include)
+target_include_directories(slipstream-client PRIVATE extern)
+set_picoquic_compile_settings(slipstream-client)
 
-target_include_directories(slipstream PRIVATE include)
-target_include_directories(slipstream PRIVATE extern)
-
-set_picoquic_compile_settings(slipstream)
+# Server binary
+add_executable(slipstream-server
+        src/slipstream_server_cli.c
+        src/slipstream_server.c
+        src/slipstream_server_cc.c
+        ${COMMON_SOURCES}
+)
+target_link_libraries(slipstream-server PRIVATE m)
+target_link_libraries(slipstream-server PRIVATE picoquic-core)
+if (BUILD_LOGLIB)
+    target_link_libraries(slipstream-server PRIVATE picoquic-log)
+endif ()
+target_include_directories(slipstream-server PRIVATE include)
+target_include_directories(slipstream-server PRIVATE extern)
+set_picoquic_compile_settings(slipstream-server)

@@ -41,4 +41,6 @@ ENV PATH=/usr/src/app/:$PATH
 COPY --from=builder --chmod=755 /usr/src/app/slipstream-client ./client
 COPY --from=builder --chmod=755 /usr/src/app/slipstream-server ./server
 
+LABEL org.opencontainers.image.source https://github.com/EndPositive/slipstream
+
 ENTRYPOINT []

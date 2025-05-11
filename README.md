@@ -1,4 +1,6 @@
 # Slipstream
+![GitHub Release](https://img.shields.io/github/v/release/EndPositive/slipstream?include_prereleases&sort=semver&display_name=tag)
+![GitHub License](https://img.shields.io/github/license/EndPositive/slipstream)
 
 A high-performance covert channel over DNS, powered by QUIC multipath.
 

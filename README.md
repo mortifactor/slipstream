@@ -121,7 +121,3 @@ $ mv ./build/slipstream ~/.local/bin
 
 David Fifield's DNSTT and Turbo Tunnel concept has been a massive source of inspiration.
 Although slipstream inherits no code, this work could not have been possible without his ideas.
-
-# License
-
-This work is licensed under the Apache License, Version 2.0.

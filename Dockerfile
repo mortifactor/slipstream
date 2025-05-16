@@ -30,7 +30,7 @@ RUN --mount=type=cache,target=/usr/src/app/cmake-build-release \
     cp cmake-build-release/slipstream-client . && \
     cp cmake-build-release/slipstream-server .
 
-FROM gcr.io/distroless/base-debian12
+FROM gcr.io/distroless/base-debian12 AS runtime
 
 WORKDIR /usr/src/app
 
@@ -38,9 +38,16 @@ COPY ./certs/ ./certs/
 
 ENV PATH=/usr/src/app/:$PATH
 
-COPY --from=builder --chmod=755 /usr/src/app/slipstream-client ./client
-COPY --from=builder --chmod=755 /usr/src/app/slipstream-server ./server
+LABEL org.opencontainers.image.source=https://github.com/EndPositive/slipstream
 
-LABEL org.opencontainers.image.source https://github.com/EndPositive/slipstream
+FROM runtime AS client
 
-ENTRYPOINT []
+COPY --from=builder --chmod=755 /usr/src/app/slipstream-client .
+
+ENTRYPOINT ["/usr/src/app/slipstream-client"]
+
+FROM runtime AS server
+
+COPY --from=builder --chmod=755 /usr/src/app/slipstream-server .
+
+ENTRYPOINT ["/usr/src/app/slipstream-server"]

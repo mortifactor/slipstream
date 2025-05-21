@@ -17,11 +17,11 @@ By carefully implementing QUIC compatibility layers, we're able to leverage QUIC
 
 ## Quick start
 
-Follow the [installation](/installation/) and [usage instruction](/usage/) guides.
+Follow the [installation](/slipstream/installation/) and [usage instruction](/slipstream/usage/) guides.
 
 ## Benchmarks
 
-In our [benchmark](/benchmark/), we show that slipstream achieves a 10-fold time decrease in exfiltrating a 10 MB file, while using up to 15% less queries.
+In our [benchmark](/slipstream/benchmark/), we show that slipstream achieves a 10-fold time decrease in exfiltrating a 10 MB file, while using up to 15% less queries.
 For downloading files into the restricted network, slipstream uses up to 37% less queries.
 Using QUIC congestion control, it accurately determines the query rate of the used DNS resolver.
 Finally, QUIC multipath allows slipstream to combine the bandwidth of multiple resolvers to largely improve its performance, even when those resolvers have different round-trip times, loss rates, or rate limits.

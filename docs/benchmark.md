@@ -1,6 +1,6 @@
 ---
 title: Benchmarks
-nav_order: 40
+nav_order: 50
 ---
 
 # Benchmarks
@@ -9,8 +9,8 @@ Comparison of slipstream and other existing DNS tunneling tools can be found in 
 
 <p align="center">
   <picture align="center">
-    <source srcset="assets/file_transfer_times_light.png">
-    <img alt="Shows a bar chart with benchmark results." src="docs/file_transfer_times_light.png">
+    <source srcset="/slipstream/assets/file_transfer_times_light.png">
+    <img alt="Shows a bar chart with benchmark results." src="/slipstream/assets/file_transfer_times_light.png">
   </picture>
 </p>
 

@@ -10,7 +10,7 @@ Since DNS is a distributed system, we can abuse existing DNS infrastructure in t
 For example, the figure below shows multiple network routes using a public DNS resolver to pass through the local or country scoped firewall.
 This is especially useful when a network mandates the use of a DNS resolver as assigned in the DHCP configuration.
 
-![DNS tunnel network setup](/assets/network.png)
+![DNS tunnel network setup](/slipstream/assets/network.png)
 
 slipstream consists of a server and client binary.
 

@@ -22,6 +22,7 @@ static struct argp_option options[] = {
     {"congestion-control", 'c', "ALGO", 0, "Congestion control algorithm (bbr, dcubic) (default: dcubic)", 0},
     {"gso",             'g', "BOOL", OPTION_ARG_OPTIONAL, "GSO enabled (true/false) (default: false). Use --gso or --gso=true to enable.", 0},
     {"domain",          'd', "DOMAIN", 0, "Domain name used for the covert channel (Required)", 0},
+    {"keep-alive-interval", 't', "MS", 0, "Send keep alive pings at this interval (default: 400, disabled: 0)", 0},
     {0} // End of options
 };
 
@@ -33,6 +34,7 @@ struct arguments {
     size_t resolver_count;
     char* cc_algo_id;
     bool gso;
+    size_t keep_alive_interval;
 };
 
 /* Client mode parser */
@@ -97,6 +99,13 @@ static error_t parse_opt(int key, char* arg, struct argp_state* state) {
              argp_error(state, "Invalid boolean value for --gso: '%s'. Use 'true' or 'false'.", arg);
         }
         break;
+    case 't':
+        arguments->keep_alive_interval = atoi(arg);
+        if (arguments->keep_alive_interval < 0) {
+            argp_error(state, "Invalid keep alive interval: %s", arg);
+        }
+        break;
+
     case ARGP_KEY_ARG:
         // No positional arguments expected
         argp_usage(state);
@@ -130,6 +139,7 @@ int main(int argc, char** argv) {
     arguments.gso = false;        // Default GSO state
     arguments.resolver_addresses = NULL;
     arguments.resolver_count = 0;
+    arguments.keep_alive_interval = 400; // Default keep alive interval
 
     // Ensure output buffers are flushed immediately (useful for debugging/logging)
     setbuf(stdout, NULL);
@@ -165,7 +175,8 @@ int main(int argc, char** argv) {
         arguments.resolver_count,
         arguments.domain_name,
         arguments.cc_algo_id,
-        arguments.gso
+        arguments.gso,
+        arguments.keep_alive_interval
     );
 
     // Free allocated memory for resolver addresses

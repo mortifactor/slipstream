@@ -658,9 +658,6 @@ static int slipstream_connect(struct sockaddr_storage* server_address,
         return -1;
     }
 
-    // 400ms
-    picoquic_enable_keep_alive(*cnx, 400000);
-
     /* Document connection in client's context */
     client_ctx->cnx = *cnx;
     /* Set the client callback context */
@@ -683,7 +680,7 @@ static int slipstream_connect(struct sockaddr_storage* server_address,
     return ret;
 }
 
-int picoquic_slipstream_client(int listen_port, struct st_address_t* server_addresses, size_t server_address_count, const char* domain_name, const char* cc_algo_id, bool gso) {
+int picoquic_slipstream_client(int listen_port, struct st_address_t* server_addresses, size_t server_address_count, const char* domain_name, const char* cc_algo_id, bool gso, const size_t keep_alive_interval) {
     /* Start: start the QUIC process */
     int ret = 0;
     uint64_t current_time = 0;
@@ -745,6 +742,12 @@ int picoquic_slipstream_client(int listen_port, struct st_address_t* server_addr
     if (ret != 0) {
         fprintf(stderr, "Could not connect to server\n");
         return -1;
+    }
+
+    if (keep_alive_interval != 0) {
+        picoquic_enable_keep_alive(cnx, keep_alive_interval * 1000);
+    } else {
+        picoquic_disable_keep_alive(cnx);
     }
 
     // Create listening socket

@@ -56,19 +56,23 @@ jobs:
         with:
           arch: aarch64
           distro: ubuntu22.04
-          # Уберите строку githubToken, если у вас нет прав на GHCR (см. п.3)
+          # Если нет прав на GHCR/кэш, НЕ указывайте githubToken.
           # githubToken: ${{ github.token }}
           dockerRunArgs: |
             --platform linux/arm64
             --volume "${{ github.workspace }}:/workspace"
-          env: |  # ВАЖНО: плоский YAML-маппинг ключ/значение
+          env: |  # Важно: плоский YAML-маппинг
             BUILD_TYPE: ${{ env.BUILD_TYPE }}
             VERSION: ${{ github.ref_name }}
           install: |
             apt-get update
             DEBIAN_FRONTEND=noninteractive apt-get install -y \
-              cmake clang ninja-build pkg-config libssl-dev
+              cmake clang ninja-build pkg-config libssl-dev git ca-certificates
+            update-ca-certificates
+            git --version
           run: |
+            set -euxo pipefail
+      
             cmake \
               -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
               -DCMAKE_MAKE_PROGRAM=ninja \
@@ -76,13 +80,26 @@ jobs:
               -DCMAKE_CXX_COMPILER=clang++ \
               -G Ninja \
               -S /workspace \
-              -B /workspace/build-arm64
+              -B /workspace/build-arm64 || {
+                echo "---- CMakeOutput.log (configure) ----" || true
+                cat /workspace/build-arm64/CMakeFiles/CMakeOutput.log || true
+                echo "---- CMakeError.log (configure) ----" || true
+                cat /workspace/build-arm64/CMakeFiles/CMakeError.log || true
+                exit 1
+              }
       
             cmake --build /workspace/build-arm64 -j"$(nproc)" \
-              --target slipstream-client slipstream-server
+              --target slipstream-client slipstream-server || {
+                echo "---- CMakeOutput.log (build) ----" || true
+                cat /workspace/build-arm64/CMakeFiles/CMakeOutput.log || true
+                echo "---- CMakeError.log (build) ----" || true
+                cat /workspace/build-arm64/CMakeFiles/CMakeError.log || true
+                exit 1
+              }
       
             mv /workspace/build-arm64/slipstream-client /workspace/build/slipstream-client-${VERSION}-linux-arm64
             mv /workspace/build-arm64/slipstream-server /workspace/build/slipstream-server-${VERSION}-linux-arm64
+
 
       # ===== Release both arches =====
       - name: Release

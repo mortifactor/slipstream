@@ -52,17 +52,18 @@ jobs:
 
       # ===== ARM64 build in aarch64 container =====
       - name: Build ARM64 (aarch64) in Ubuntu container
-        uses: uraimo/run-on-arch-action@v2
+        uses: uraimo/run-on-arch-action@v3
         with:
           arch: aarch64
           distro: ubuntu22.04
-          githubToken: ${{ github.token }}  # включает кэш/пуш в ghcr.io
+          # Уберите строку githubToken, если у вас нет прав на GHCR (см. п.3)
+          # githubToken: ${{ github.token }}
           dockerRunArgs: |
             --platform linux/arm64
             --volume "${{ github.workspace }}:/workspace"
-          env:  # <— передаём внутрь контейнера
-            BUILD_TYPE=${{ env.BUILD_TYPE }}
-            VERSION=${{ github.ref_name }}
+          env: |  # ВАЖНО: плоский YAML-маппинг ключ/значение
+            BUILD_TYPE: ${{ env.BUILD_TYPE }}
+            VERSION: ${{ github.ref_name }}
           install: |
             apt-get update
             DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -76,10 +77,10 @@ jobs:
               -G Ninja \
               -S /workspace \
               -B /workspace/build-arm64
-
+      
             cmake --build /workspace/build-arm64 -j"$(nproc)" \
               --target slipstream-client slipstream-server
-
+      
             mv /workspace/build-arm64/slipstream-client /workspace/build/slipstream-client-${VERSION}-linux-arm64
             mv /workspace/build-arm64/slipstream-server /workspace/build/slipstream-server-${VERSION}-linux-arm64
 

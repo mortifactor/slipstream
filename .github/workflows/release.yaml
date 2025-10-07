@@ -20,68 +20,35 @@ jobs:
         with:
           submodules: recursive
 
-      # ===== x86_64 native build =====
-      - name: Install build dependencies (x86_64)
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev ninja-build clang
+          sudo apt install -y pkg-config libssl-dev ninja-build
 
-      - name: Configure CMake (x86_64)
+      - name: Configure CMake
         run: |
           cmake \
-            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
             -DCMAKE_MAKE_PROGRAM=ninja \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
             -G Ninja \
-            -S ${{ github.workspace }} \
-            -B ${{ github.workspace }}/build
+            -S ${{github.workspace}} \
+            -B ${{github.workspace}}/build
 
-      - name: Build with CMake (x86_64)
+      - name: Build with CMake
         run: |
           cmake \
-            --build ${{ github.workspace }}/build \
+            --build ${{github.workspace}}/build \
             -j $(nproc) \
             --target slipstream-client slipstream-server
 
-      - name: Rename Binaries (x86_64)
+      - name: Rename Binaries
         run: |
           VERSION=${{ github.ref_name }}
-          mv ${{ github.workspace }}/build/slipstream-client ${{ github.workspace }}/build/slipstream-client-${VERSION}-linux-x86_64
-          mv ${{ github.workspace }}/build/slipstream-server ${{ github.workspace }}/build/slipstream-server-${VERSION}-linux-x86_64
+          mv ${{github.workspace}}/build/slipstream-client ${{github.workspace}}/build/slipstream-client-${VERSION}-linux-x86_64
+          mv ${{github.workspace}}/build/slipstream-server ${{github.workspace}}/build/slipstream-server-${VERSION}-linux-x86_64
 
-      # ===== ARM64 build via QEMU container =====
-      - name: Build ARM64 (aarch64) in Ubuntu container
-        uses: uraimo/run-on-arch-action@v2
-        env:
-          BUILD_TYPE: ${{ env.BUILD_TYPE }}
-          VERSION: ${{ github.ref_name }}
-        with:
-          arch: aarch64
-          distro: ubuntu22.04
-          githubToken: ${{ github.token }}
-          dockerRunArgs: |
-            --volume "${{ github.workspace }}:/workspace"
-          install: |
-            apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y \
-              cmake clang ninja-build pkg-config libssl-dev
-          run: |
-            cmake \
-              -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
-              -DCMAKE_MAKE_PROGRAM=ninja \
-              -DCMAKE_C_COMPILER=clang \
-              -DCMAKE_CXX_COMPILER=clang++ \
-              -G Ninja \
-              -S /workspace \
-              -B /workspace/build-arm64
-
-            cmake --build /workspace/build-arm64 -j"$(nproc)" --target slipstream-client slipstream-server
-
-            mv /workspace/build-arm64/slipstream-client /workspace/build/slipstream-client-${VERSION}-linux-arm64
-            mv /workspace/build-arm64/slipstream-server /workspace/build/slipstream-server-${VERSION}-linux-arm64
-
-      # ===== Release both arches =====
       - name: Release
         uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
@@ -91,3 +58,78 @@ jobs:
           files: |
             build/slipstream-client-*
             build/slipstream-server-*
+
+  docker-build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata (tags, labels) for Docker (server)
+        id: meta-server
+        uses: docker/metadata-action@v3
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-server
+
+      - name: Extract metadata (tags, labels) for Docker (client)
+        id: meta-client
+        uses: docker/metadata-action@v3
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-client
+
+      - name: Build and push Docker image (server)
+        id: push-server
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta-server.outputs.tags }}
+          labels: ${{ steps.meta-server.outputs.labels }}
+          target: server
+
+      - name: Build and push Docker image (client)
+        id: push-client
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta-client.outputs.tags }}
+          labels: ${{ steps.meta-client.outputs.labels }}
+          target: client
+
+      - name: Generate artifact attestation (server)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-server
+          subject-digest: ${{ steps.push-server.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate artifact attestation (client)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-client
+          subject-digest: ${{ steps.push-client.outputs.digest }}
+          push-to-registry: true
+

@@ -108,6 +108,7 @@ jobs:
         with:
           draft: false
           generate_release_notes: true
+          tag_name: "0.0.1"
           files: |
             build/slipstream-client-*
             build/slipstream-server-*

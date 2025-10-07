@@ -60,7 +60,7 @@ jobs:
           dockerRunArgs: |
             --platform linux/arm64
             --volume "${{ github.workspace }}:/workspace"
-          env: |   # <— передаём внутрь контейнера
+          env:  # <— передаём внутрь контейнера
             BUILD_TYPE=${{ env.BUILD_TYPE }}
             VERSION=${{ github.ref_name }}
           install: |
